@@ -6,16 +6,19 @@
 //
 
 import SwiftUI
-import CoreData
 
 @main
-struct hiveApp: App {
-    let persistenceController = PersistenceController.shared
-
+struct HiveApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .navigationTitle("Hive")
+        }
+        .defaultSize(width: 1100, height: 720)
+        .windowToolbarStyle(.unified(showsTitle: false))
+
+        Settings {
+            AppSettingsView()
         }
     }
 }

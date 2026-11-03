@@ -1,0 +1,13 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build macOS app
+        run: xcodebuild -project hive.xcodeproj -scheme hive -destination 'platform=macOS' build
