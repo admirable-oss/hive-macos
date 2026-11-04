@@ -42,6 +42,10 @@ final class AppViewModel: ObservableObject {
     @Published var pendingClose: PendingClose?
     @Published var showingQuickOpen = false
     @Published var showingOverview = false
+    @Published var showingInbox = false
+
+    /// Mirrors Hive's agent-state changes, for the command center's activity log.
+    var onAgentChange: ((HiveAgent?, HiveAgent) -> Void)?
 
     private let cli: HiveCLIService
     private let notifier = AgentNotifier.shared
@@ -77,6 +81,7 @@ final class AppViewModel: ObservableObject {
 
         workspace.onAgentChange = { [weak self] previous, agent in
             self?.notifier.agentChanged(from: previous, to: agent)
+            self?.onAgentChange?(previous, agent)
         }
         notifier.isShowing = { [weak self] agent in self?.isShowing(agent) ?? false }
         notifier.onOpen = { [weak self] id in
@@ -316,7 +321,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func openRemoteAgent(_ agent: HiveAgent, on machine: SavedHiveMachine) {
-        showingOverview = false
+        dismissSurfaces()
         if let existing = tabs.first(where: { if case .remote(let host, let id, _) = $0.destination { return host == machine.name && id == agent.id }; return false }) {
             activeTabID = existing.id
         } else {
@@ -325,7 +330,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func openRemoteShell(_ machine: SavedHiveMachine) {
-        showingOverview = false
+        dismissSurfaces()
         if let existing = tabs.first(where: { if case .remoteShell(let name, _) = $0.destination { return name == machine.name }; return false }) {
             activeTabID = existing.id
         } else {
@@ -358,7 +363,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func openHiveTab(_ hiveTabID: String) {
-        showingOverview = false
+        dismissSurfaces()
         if let open = tabs.first(where: { $0.hiveTabID == hiveTabID }) {
             activeTabID = open.id
         } else {
@@ -383,8 +388,25 @@ final class AppViewModel: ObservableObject {
     }
 
     func newScratchShell() {
-        showingOverview = false
+        dismissSurfaces()
         append(WorkspaceTab(destination: .scratch))
+    }
+
+    /// Switches the detail area to the overview, leaving the inbox.
+    func showOverview(_ on: Bool) {
+        showingOverview = on
+        if on { showingInbox = false }
+    }
+
+    /// Switches the detail area to the inbox, leaving the overview.
+    func showInbox(_ on: Bool) {
+        showingInbox = on
+        if on { showingOverview = false }
+    }
+
+    private func dismissSurfaces() {
+        showingOverview = false
+        showingInbox = false
     }
 
     func selectTab(at index: Int) {

@@ -23,7 +23,7 @@ clear path from parallel work to reviewed changes.
 | M4 Remote & Multi-Machine | `v0.4` | ✅ Live |
 | M5 Settings, Sessions & Upkeep | `v0.5` | ✅ Live |
 | M6 Review Cockpit & Changes | `v0.6` | ✅ Live |
-| M7 Personal Command Center | `v0.7` | Proposed |
+| M7 Personal Command Center | `v0.7` | ✅ Live |
 | M8 macOS Automation & Handoff | `v0.8` | Proposed |
 | M9 Extensibility & Plugin Surfaces | `v0.9` | Proposed |
 | M10 Desktop 1.0 & Trusted Distribution | `v1.0` | Proposed |
@@ -169,7 +169,7 @@ diff, stage the hunks you want, and commit — with the affected environment and
 
 ---
 
-## M7 · Personal Command Center — `v0.7` — **PROPOSED**
+## ✅ M7 · Personal Command Center — `v0.7` — **LIVE**
 
 Build on the completed parity, remote and task foundations to make Hive feel like *your* workspace.
 

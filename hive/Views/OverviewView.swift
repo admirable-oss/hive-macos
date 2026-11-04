@@ -51,7 +51,7 @@ struct OverviewView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
         .onKeyPress(.escape) {
-            viewModel.showingOverview = false
+            viewModel.showOverview(false)
             return .handled
         }
     }

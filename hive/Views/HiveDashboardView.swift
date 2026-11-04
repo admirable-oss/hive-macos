@@ -13,6 +13,7 @@ struct HiveDashboardView: View {
 
     @StateObject private var viewModel: AppViewModel
     @StateObject private var terminals = TerminalStore()
+    @StateObject private var commandCenter = CommandCenterStore()
     @State private var searchText = ""
     @AppStorage("hive.desktop.environmentsExpanded") private var environmentsExpanded = true
     @AppStorage("hive.desktop.agentsExpanded") private var agentsExpanded = true
@@ -34,6 +35,11 @@ struct HiveDashboardView: View {
     @State private var showingObservers = false
     @State private var showingTaskCenter = false
     @State private var showingLayoutManager = false
+    @State private var showingWorkspaceViews = false
+    @State private var showingActivity = false
+    @State private var showingUsage = false
+    @State private var showingDelegation = false
+    @State private var delegationParentID: String?
     @State private var reviewEnvironment: HiveEnvironment?
     @State private var requestedChangePath: String?
 
@@ -43,7 +49,8 @@ struct HiveDashboardView: View {
         _viewModel = StateObject(wrappedValue: AppViewModel(hiveURL: hiveURL, sessionName: sessionName))
     }
 
-    var body: some View {
+    /// The window's frame: sidebar, detail and inspector.
+    private var shell: some View {
         NavigationSplitView {
             sidebar
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
@@ -75,93 +82,124 @@ struct HiveDashboardView: View {
         .onChange(of: viewModel.tabs) { _, tabs in
             retainSessions(for: tabs)
         }
-        .modifier(QuickOpenOverlay(showing: $viewModel.showingQuickOpen, viewModel: viewModel))
-        .modifier(PendingCloseDialog(pending: $viewModel.pendingClose, confirm: viewModel.confirm))
-        .sheet(isPresented: $showingCreateEnvironment) {
-            CreateEnvironmentSheet { name, path in
-                Task { await viewModel.createEnvironment(name: name, path: path) }
+    }
+
+    var body: some View {
+        commandSheets
+            .task { viewModel.start() }
+            .task { openPendingAgentIfAvailable() }
+            .onAppear {
+                viewModel.onAgentChange = { previous, agent in
+                    commandCenter.recordAgentChange(previous: previous, agent: agent)
+                }
+                applyActiveView()
             }
-        }
-        .sheet(isPresented: $showingStartAgent) {
-            StartAgentSheet(
-                environments: viewModel.environments,
-                kinds: viewModel.agentKinds,
-                preferredEnvironmentID: preferredStartEnvironmentID,
-                onStart: startAgent
-            )
-        }
-        .sheet(item: $worktreeRepository) { environment in
-            NewWorktreeSheet(environment: environment, kinds: viewModel.agentKinds) { branch, base, agent in
-                Task { await viewModel.createWorktree(repo: environment.path, branch: branch, base: base, startAgent: agent) }
+            .onChange(of: commandCenter.activeViewID) { _, _ in applyActiveView() }
+            .onChange(of: viewModel.agents.count) { _, _ in openPendingAgentIfAvailable() }
+            .onChange(of: viewModel.activeTabID) { saveDirectories() }
+            .onChange(of: machinesExpanded) { _, expanded in
+                if expanded { for machine in viewModel.machines where machine.disabled != true { Task { await viewModel.refreshMachine(machine) } } }
             }
-        }
-        .modifier(EnvironmentRemovalDialog(
-            environment: $environmentPendingRemoval,
-            remove: { id in Task { await viewModel.removeEnvironment(id) } }
-        ))
-        .sheet(isPresented: $showingAddMachine) {
-            AddMachineSheet { name, host in
-                Task { await viewModel.addMachine(name: name, host: host) }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                saveDirectories()
             }
-        }
-        .sheet(item: $viewModel.inspectedMachine) { machine in
-            MachineInspectorView(machine: machine, viewModel: viewModel)
-        }
-        .sheet(isPresented: $showingTaskCenter) {
-            TaskCenterView(workspace: viewModel.workspace) { task, path in
-                guard let environmentID = task.environmentID ?? task.spec.environmentID else { return }
-                requestedChangePath = path
-                viewModel.openEnvironment(environmentID)
-                lastInspectorPanel = .changes
-                inspectorPanel = .changes
+            .frame(minWidth: 820, minHeight: 540)
+    }
+
+    private var workspaceSheets: some View {
+        shell
+            .modifier(QuickOpenOverlay(showing: $viewModel.showingQuickOpen, viewModel: viewModel))
+            .modifier(PendingCloseDialog(pending: $viewModel.pendingClose, confirm: viewModel.confirm))
+            .sheet(isPresented: $showingCreateEnvironment) {
+                CreateEnvironmentSheet { name, path in
+                    Task { await viewModel.createEnvironment(name: name, path: path) }
+                }
             }
-        }
-        .sheet(isPresented: $showingLayoutManager) {
-            LayoutManagerView(workspace: viewModel.workspace)
-        }
-        .sheet(item: $reviewEnvironment) { environment in
-            ReviewCockpitView(environment: environment, viewModel: viewModel)
-        }
-        .sheet(isPresented: $showingNearbyMachines) {
-            NearbyMachinesSheet(viewModel: viewModel)
-        }
-        .sheet(isPresented: $showingObservers) {
-            ObserverManagerView(workspace: viewModel.workspace, cli: HiveCLIService(executableURL: hiveURL, sessionName: sessionName))
-        }
-        .alert("Rename machine", isPresented: Binding(get: { machineToRename != nil }, set: { if !$0 { machineToRename = nil } })) {
-            TextField("Machine name", text: $machineRenameText)
-            Button("Cancel", role: .cancel) { machineToRename = nil }
-            Button("Rename") {
-                if let machineToRename { Task { await viewModel.renameMachine(machineToRename, to: machineRenameText.trimmingCharacters(in: .whitespacesAndNewlines)) } }
-                machineToRename = nil
+            .sheet(isPresented: $showingStartAgent) {
+                StartAgentSheet(
+                    environments: viewModel.environments,
+                    kinds: viewModel.agentKinds,
+                    preferredEnvironmentID: preferredStartEnvironmentID,
+                    onStart: startAgent
+                )
             }
-            .disabled(machineRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        } message: { Text("Choose a new name for this saved machine.") }
-        .confirmationDialog("Remove saved machine?", isPresented: Binding(get: { machineToRemove != nil }, set: { if !$0 { machineToRemove = nil } }), titleVisibility: .visible) {
-            Button("Remove Machine", role: .destructive) {
-                if let machineToRemove { Task { await viewModel.removeMachine(machineToRemove) } }
-                machineToRemove = nil
+            .sheet(item: $worktreeRepository) { environment in
+                NewWorktreeSheet(environment: environment, kinds: viewModel.agentKinds) { branch, base, agent in
+                    Task { await viewModel.createWorktree(repo: environment.path, branch: branch, base: base, startAgent: agent) }
+                }
             }
-            Button("Cancel", role: .cancel) { machineToRemove = nil }
-        } message: { Text("This forgets the saved connection. Hive and its agents keep running on the remote machine.") }
-        .confirmationDialog("Revoke machine identity?", isPresented: Binding(get: { machineToRevoke != nil }, set: { if !$0 { machineToRevoke = nil } }), titleVisibility: .visible) {
-            Button("Revoke Identity", role: .destructive) {
-                if let machineToRevoke { Task { await viewModel.revokeMachine(machineToRevoke) } }
-                machineToRevoke = nil
+            .modifier(EnvironmentRemovalDialog(
+                environment: $environmentPendingRemoval,
+                remove: { id in Task { await viewModel.removeEnvironment(id) } }
+            ))
+            .sheet(isPresented: $showingAddMachine) {
+                AddMachineSheet { name, host in
+                    Task { await viewModel.addMachine(name: name, host: host) }
+                }
             }
-            Button("Cancel", role: .cancel) { machineToRevoke = nil }
-        } message: { Text("Hive forgets this machine’s pinned identity and disables it. You can trust it again later.") }
-        .task { viewModel.start() }
-        .task { openPendingAgentIfAvailable() }
-        .onChange(of: viewModel.agents.count) { _, _ in openPendingAgentIfAvailable() }
-        .onChange(of: viewModel.activeTabID) { saveDirectories() }
-        .onChange(of: machinesExpanded) { _, expanded in
-            if expanded { for machine in viewModel.machines where machine.disabled != true { Task { await viewModel.refreshMachine(machine) } } }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-            saveDirectories()
-        }
-        .frame(minWidth: 820, minHeight: 540)
+            .sheet(item: $viewModel.inspectedMachine) { machine in
+                MachineInspectorView(machine: machine, viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingTaskCenter) {
+                TaskCenterView(workspace: viewModel.workspace) { task, path in
+                    guard let environmentID = task.environmentID ?? task.spec.environmentID else { return }
+                    requestedChangePath = path
+                    viewModel.openEnvironment(environmentID)
+                    lastInspectorPanel = .changes
+                    inspectorPanel = .changes
+                }
+            }
+            .sheet(isPresented: $showingLayoutManager) {
+                LayoutManagerView(workspace: viewModel.workspace)
+            }
+    }
+
+    private var commandSheets: some View {
+        workspaceSheets
+            .sheet(item: $reviewEnvironment) { environment in
+                ReviewCockpitView(environment: environment, viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingNearbyMachines) {
+                NearbyMachinesSheet(viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingObservers) {
+                ObserverManagerView(workspace: viewModel.workspace, cli: HiveCLIService(executableURL: hiveURL, sessionName: sessionName))
+            }
+            .sheet(isPresented: $showingWorkspaceViews) {
+                WorkspaceViewsView(commandCenter: commandCenter, viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingActivity) {
+                ActivityHistoryView(commandCenter: commandCenter, hiveURL: hiveURL, sessionName: sessionName)
+            }
+            .sheet(isPresented: $showingUsage) {
+                UsageView(viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingDelegation) {
+                DelegationView(viewModel: viewModel, commandCenter: commandCenter, initialParentID: delegationParentID)
+            }
+            .alert("Rename machine", isPresented: Binding(get: { machineToRename != nil }, set: { if !$0 { machineToRename = nil } })) {
+                TextField("Machine name", text: $machineRenameText)
+                Button("Cancel", role: .cancel) { machineToRename = nil }
+                Button("Rename") {
+                    if let machineToRename { Task { await viewModel.renameMachine(machineToRename, to: machineRenameText.trimmingCharacters(in: .whitespacesAndNewlines)) } }
+                    machineToRename = nil
+                }
+                .disabled(machineRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } message: { Text("Choose a new name for this saved machine.") }
+            .confirmationDialog("Remove saved machine?", isPresented: Binding(get: { machineToRemove != nil }, set: { if !$0 { machineToRemove = nil } }), titleVisibility: .visible) {
+                Button("Remove Machine", role: .destructive) {
+                    if let machineToRemove { Task { await viewModel.removeMachine(machineToRemove) } }
+                    machineToRemove = nil
+                }
+                Button("Cancel", role: .cancel) { machineToRemove = nil }
+            } message: { Text("This forgets the saved connection. Hive and its agents keep running on the remote machine.") }
+            .confirmationDialog("Revoke machine identity?", isPresented: Binding(get: { machineToRevoke != nil }, set: { if !$0 { machineToRevoke = nil } }), titleVisibility: .visible) {
+                Button("Revoke Identity", role: .destructive) {
+                    if let machineToRevoke { Task { await viewModel.revokeMachine(machineToRevoke) } }
+                    machineToRevoke = nil
+                }
+                Button("Cancel", role: .cancel) { machineToRevoke = nil }
+            } message: { Text("Hive forgets this machine’s pinned identity and disables it. You can trust it again later.") }
     }
 
     private func openPendingAgentIfAvailable() {
@@ -176,8 +214,10 @@ struct HiveDashboardView: View {
             VStack(spacing: 0) {
                 Button { viewModel.showingQuickOpen = true } label: { EmptyView() }
                     .keyboardShortcut("k", modifiers: .command)
-                Button { viewModel.showingOverview.toggle() } label: { EmptyView() }
+                Button { viewModel.showOverview(!viewModel.showingOverview) } label: { EmptyView() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
+                Button { viewModel.showInbox(!viewModel.showingInbox) } label: { EmptyView() }
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
                 Button { viewModel.requestCloseFocusedPane() } label: { EmptyView() }
                     .keyboardShortcut("w", modifiers: .command)
                 Button { viewModel.selectAdjacentTab(-1) } label: { EmptyView() }
@@ -272,11 +312,17 @@ struct HiveDashboardView: View {
                 Button { showingObservers = true } label: { Label("Observers", systemImage: "eye") }
                     .buttonStyle(ToolbarPillButtonStyle())
                     .help("Manage read-only web observer credentials")
-                Button { viewModel.showingOverview.toggle() } label: {
+                Button { viewModel.showInbox(!viewModel.showingInbox) } label: {
+                    Label("Inbox", systemImage: "tray.full")
+                }
+                .buttonStyle(ToolbarPillButtonStyle(isActive: viewModel.showingInbox))
+                .help("Inbox — everything that needs you (⇧⌘I)")
+                Button { viewModel.showOverview(!viewModel.showingOverview) } label: {
                     Label("Overview", systemImage: "rectangle.grid.2x2")
                 }
                 .buttonStyle(ToolbarPillButtonStyle(isActive: viewModel.showingOverview))
                 .help("Overview (⇧⌘O)")
+                commandCenterMenu
             }
         }
         .flatToolbarBackground()
@@ -293,6 +339,59 @@ struct HiveDashboardView: View {
         }
         .buttonStyle(ToolbarPillButtonStyle(isActive: inspectorPanel == panel))
         .help(inspectorPanel == panel ? "Hide \(panel.title.lowercased())" : "Show \(panel.title.lowercased())")
+    }
+
+    /// M7 · The personal command center: saved views, helper delegations, activity and usage.
+    private var commandCenterMenu: some View {
+        Menu {
+            Button { showingWorkspaceViews = true } label: { Label("Saved views…", systemImage: "rectangle.3.group.bubble.left") }
+            Button { showingDelegation = true } label: { Label("Delegate a helper…", systemImage: "arrow.triangle.branch") }
+            Divider()
+            Button { showingActivity = true } label: { Label("Activity & sessions…", systemImage: "clock.arrow.circlepath") }
+            Button { showingUsage = true } label: { Label("Usage & capacity…", systemImage: "gauge.with.dots.needle.33percent") }
+            if let active = commandCenter.activeView {
+                Divider()
+                Button { commandCenter.clearActiveView(); viewModel.showOverview(false) } label: {
+                    Label("Unapply “\(active.name)”", systemImage: "xmark.circle")
+                }
+            }
+        } label: {
+            Label("Command", systemImage: "command")
+        }
+        .buttonStyle(ToolbarPillButtonStyle(isActive: commandCenter.activeViewID != nil))
+        .help("Command center — views, delegation, activity and usage")
+    }
+
+    // MARK: - Active view
+
+    /// The settings of the saved view currently applied to the shell, if any.
+    private var activeViewSettings: WorkspaceViewSettings? { commandCenter.activeView?.settings }
+
+    private var showsEnvironmentsSection: Bool { activeViewSettings?.showsEnvironments ?? true }
+    private var showsAgentsSection: Bool { activeViewSettings?.showsAgents ?? true }
+    private var showsMachinesSection: Bool { activeViewSettings?.showsMachines ?? true }
+    private var groupsWorktrees: Bool { activeViewSettings?.groupsWorktrees ?? true }
+    private var sidebarRowHeight: Double { activeViewSettings?.density.rowHeight ?? 22 }
+
+    /// Applies the active view's declarative settings to the shell. Nothing here executes code;
+    /// a view only chooses which sections show, how dense they are and where the detail lands.
+    private func applyActiveView() {
+        guard let settings = activeViewSettings else { return }
+        switch settings.kind {
+        case .terminal:
+            viewModel.showOverview(false)
+            viewModel.showInbox(false)
+        case .overview:
+            viewModel.showOverview(true)
+        case .statusBoard:
+            viewModel.showInbox(true)
+        }
+        if settings.showsInspector, let raw = settings.inspector, let panel = InspectorPanel(rawValue: raw) {
+            lastInspectorPanel = panel
+            inspectorPanel = panel
+        } else {
+            inspectorPanel = nil
+        }
     }
 
     @ViewBuilder
@@ -343,30 +442,35 @@ struct HiveDashboardView: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             List(selection: sidebarSelection) {
-                Section(isExpanded: $environmentsExpanded) {
-                    if filteredEnvironments.isEmpty {
-                        SidebarEmptyState(
-                            text: searchText.isEmpty ? "No environments yet" : "No matching environments",
-                            actionTitle: searchText.isEmpty ? "Add environment" : nil,
-                            action: { showingCreateEnvironment = true }
-                        )
-                    } else {
-                        ForEach(nonWorktreeEnvironments) { environment in environmentSidebarRow(environment) }
-                        ForEach(worktreeRepositories, id: \.self) { repo in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Label(URL(fileURLWithPath: repo).lastPathComponent, systemImage: "arrow.triangle.branch")
-                                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                                    .padding(.leading, 8).selectionDisabled()
-                                ForEach(worktreeEnvironments(in: repo)) { environment in
-                                    environmentSidebarRow(environment).padding(.leading, 14)
+                if showsEnvironmentsSection {
+                    Section(isExpanded: $environmentsExpanded) {
+                        if filteredEnvironments.isEmpty {
+                            SidebarEmptyState(
+                                text: searchText.isEmpty ? "No environments yet" : "No matching environments",
+                                actionTitle: searchText.isEmpty ? "Add environment" : nil,
+                                action: { showingCreateEnvironment = true }
+                            )
+                        } else if groupsWorktrees {
+                            ForEach(nonWorktreeEnvironments) { environment in environmentSidebarRow(environment) }
+                            ForEach(worktreeRepositories, id: \.self) { repo in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Label(URL(fileURLWithPath: repo).lastPathComponent, systemImage: "arrow.triangle.branch")
+                                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                        .padding(.leading, 8).selectionDisabled()
+                                    ForEach(worktreeEnvironments(in: repo)) { environment in
+                                        environmentSidebarRow(environment).padding(.leading, 14)
+                                    }
                                 }
                             }
+                        } else {
+                            ForEach(filteredEnvironments) { environment in environmentSidebarRow(environment) }
                         }
+                    } header: {
+                        SidebarSectionHeader(title: "Environments", symbol: "folder", count: filteredEnvironments.count)
                     }
-                } header: {
-                    SidebarSectionHeader(title: "Environments", symbol: "folder", count: filteredEnvironments.count)
                 }
 
+                if showsAgentsSection {
                 Section(isExpanded: $agentsExpanded) {
                     if filteredAgents.isEmpty {
                         SidebarEmptyState(
@@ -387,7 +491,9 @@ struct HiveDashboardView: View {
                 } header: {
                     SidebarSectionHeader(title: "Agents", symbol: "sparkles", count: filteredAgents.count, showsDivider: true)
                 }
+                }
 
+                if showsMachinesSection {
                 Section(isExpanded: $machinesExpanded) {
                     ForEach(filteredMachines) { machine in
                         VStack(alignment: .leading, spacing: 1) {
@@ -431,9 +537,10 @@ struct HiveDashboardView: View {
                 } header: {
                     SidebarSectionHeader(title: "Machines", symbol: "server.rack", count: filteredMachines.count, showsDivider: true)
                 }
+                }
             }
             .listStyle(.sidebar)
-            .environment(\.defaultMinListRowHeight, 22)
+            .environment(\.defaultMinListRowHeight, sidebarRowHeight)
             .dropDestination(for: URL.self) { urls, _ in
                 let folders = urls.filter { url in
                     var isDirectory: ObjCBool = false
@@ -500,6 +607,7 @@ struct HiveDashboardView: View {
     private func agentMenu(_ agent: HiveAgent) -> some View {
         Button("Open") { viewModel.openAgent(agent.id) }
         Button("New Hive Tab in \(agent.environmentID)") { Task { await viewModel.newHiveTab(in: agent.environmentID) } }
+        Button("Delegate Helper…") { delegationParentID = agent.id; showingDelegation = true }
 
         Divider()
 
@@ -594,7 +702,20 @@ struct HiveDashboardView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if viewModel.showingOverview {
+        if viewModel.showingInbox {
+            InboxView(
+                viewModel: viewModel,
+                commandCenter: commandCenter,
+                onReview: { environment, _ in
+                    if let environment { reviewEnvironment = environment }
+                },
+                onDelegate: { agent in
+                    delegationParentID = agent.id
+                    showingDelegation = true
+                },
+                onClose: { viewModel.showInbox(false) }
+            )
+        } else if viewModel.showingOverview {
             OverviewView(viewModel: viewModel)
         } else if let tab = viewModel.activeTab {
             Group {
