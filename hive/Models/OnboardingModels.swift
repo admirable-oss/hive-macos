@@ -45,13 +45,19 @@ struct HiveAgent: Decodable, Identifiable, Hashable {
     let name: String
     let environmentID: String
     let paneID: String?
+    let tabID: String?
     let state: String
     let reason: String?
+    let since: String?
+    let sessionID: String?
+    let source: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, name, state, reason
+        case id, kind, name, state, reason, since, source
         case environmentID = "environment_id"
         case paneID = "pane_id"
+        case tabID = "tab_id"
+        case sessionID = "session_id"
     }
 }
 

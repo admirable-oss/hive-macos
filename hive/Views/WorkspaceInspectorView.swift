@@ -3,14 +3,16 @@ import Quartz
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum InspectorPanel: String, Hashable {
+enum InspectorPanel: String, Hashable, CaseIterable {
     case files
     case changes
+    case agent
 
     var title: String {
         switch self {
         case .files: "Files"
         case .changes: "Changes"
+        case .agent: "Agent"
         }
     }
 
@@ -18,16 +20,19 @@ enum InspectorPanel: String, Hashable {
         switch self {
         case .files: "doc"
         case .changes: "arrow.triangle.branch"
+        case .agent: "sparkles"
         }
     }
 }
 
-/// The right-hand column. Both panels follow the active terminal's current directory.
+/// The right-hand column. Files and Changes follow the active terminal's current directory;
+/// Agent shows the active tab's agent.
 struct WorkspaceInspectorView: View {
     let panel: InspectorPanel
     let directory: String
     /// Changes whenever Hive reports new git counts, so the Changes panel reloads on its own.
     let changeToken: AnyHashable
+    @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
         switch panel {
@@ -37,13 +42,26 @@ struct WorkspaceInspectorView: View {
         case .changes:
             ChangesView(directory: directory, changeToken: changeToken)
                 .id(directory)
+        case .agent:
+            if let agent = viewModel.activeAgent {
+                AgentInspectorView(agent: agent, viewModel: viewModel)
+                    .id(agent.id)
+            } else {
+                InspectorCard(title: "Agent", detail: "", onReload: {}) {
+                    ContentUnavailableView(
+                        "No Agent Here",
+                        systemImage: "sparkles",
+                        description: Text("Open an agent’s tab, or start one in this environment.")
+                    )
+                }
+            }
         }
     }
 }
 
 // MARK: - Card
 
-private struct InspectorCard<Content: View>: View {
+struct InspectorCard<Content: View>: View {
     let title: String
     let detail: String
     let onReload: () -> Void

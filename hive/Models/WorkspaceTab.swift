@@ -1,16 +1,21 @@
 import Foundation
 
-/// What a terminal tab runs.
+/// What a desktop tab shows.
 enum WorkspaceDestination: Hashable, Codable {
-    /// A login zsh in the environment's folder, or the home folder when there is none.
-    case shell(environmentID: String?)
-    /// `terminal.attach` to an agent the daemon runs.
-    case agent(String)
+    /// One of the daemon's tabs, with its panes; shared with the TUI and any other client.
+    case hive(tabID: String)
+    /// A local login shell outside any environment. Only this window knows about it.
+    case scratch
 }
 
 struct WorkspaceTab: Identifiable, Hashable, Codable {
     var id = UUID()
     var destination: WorkspaceDestination
-    /// Where a shell last was, so a relaunch reopens it there.
+    /// Where a scratch shell last was, so a relaunch reopens it there.
     var directory: String?
+
+    var hiveTabID: String? {
+        if case .hive(let id) = destination { return id }
+        return nil
+    }
 }

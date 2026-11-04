@@ -1,12 +1,26 @@
-import Foundation
+import AppKit
 import Combine
+import Foundation
 
 @MainActor
 final class AppViewModel: ObservableObject {
+    /// Something that would stop a running agent, waiting for the user to confirm.
+    enum PendingClose: Identifiable {
+        case pane(id: String, agent: HiveAgent)
+        case tab(id: WorkspaceTab.ID, hiveTabID: String, agents: [HiveAgent])
+
+        var id: String {
+            switch self {
+            case .pane(let id, _): "pane-\(id)"
+            case .tab(let id, _, _): "tab-\(id)"
+            }
+        }
+    }
+
     /// Hive's state, live from the daemon.
     let workspace: HiveWorkspaceStore
 
-    /// The desktop's own tabs. Saved across launches.
+    /// The desktop's tabs: Hive tabs it shows, and local scratch shells. Saved across launches.
     @Published private(set) var tabs: [WorkspaceTab] {
         didSet { saveTabs() }
     }
@@ -14,29 +28,96 @@ final class AppViewModel: ObservableObject {
         didSet { saveTabs() }
     }
     @Published private(set) var sidebarError: String?
+    @Published private(set) var machines: [SavedHiveMachine] = []
+    @Published var inspectedMachine: SavedHiveMachine?
+    @Published private(set) var machineStatus: HiveMachineStatus?
+    @Published private(set) var checkingMachine = false
+    @Published var pendingClose: PendingClose?
+    @Published var showingQuickOpen = false
+    @Published var showingOverview = false
 
     private let cli: HiveCLIService
-    private var workspaceChanges: AnyCancellable?
+    private let notifier = AgentNotifier.shared
+    private var subscriptions: Set<AnyCancellable> = []
 
-    private static let savedTabsKey = "hive.desktop.tabs"
+    private static let savedTabsKey = "hive.desktop.tabs.v2"
 
     init(hiveURL: URL) {
         cli = HiveCLIService(executableURL: hiveURL)
         workspace = HiveWorkspaceStore(hiveURL: hiveURL)
 
         let restored = Self.loadTabs()
-        tabs = restored.tabs.isEmpty ? [WorkspaceTab(destination: .shell(environmentID: nil))] : restored.tabs
-        activeTabID = restored.tabs.isEmpty ? tabs.first?.id : restored.activeID
+        tabs = restored.tabs
+        activeTabID = restored.activeID
 
         // Views observe this model; pass the store's changes through.
-        workspaceChanges = workspace.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
-        workspace.onSnapshot = { [weak self] isFirst in
-            if isFirst { self?.dropTabsForMissingAgents() }
+        workspace.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &subscriptions)
+        workspace.$tabs
+            .dropFirst()
+            .sink { [weak self] hiveTabs in self?.dropTabsMissingFrom(hiveTabs) }
+            .store(in: &subscriptions)
+        workspace.$agents
+            .sink { [weak self] agents in self?.notifier.updateBadge(for: agents) }
+            .store(in: &subscriptions)
+
+        workspace.onAgentChange = { [weak self] previous, agent in
+            self?.notifier.agentChanged(from: previous, to: agent)
+        }
+        notifier.isShowing = { [weak self] agent in self?.isShowing(agent) ?? false }
+        notifier.onOpen = { [weak self] id in
+            NSApp.activate()
+            self?.openAgent(id)
+        }
+        notifier.onKeys = { [weak self] id, keys in
+            Task { await self?.sendKeys(keys, toAgent: id) }
         }
     }
 
     func start() {
-        workspace.start()
+        notifier.configure()
+        Task {
+            await loadRuntimeSettings()
+            workspace.start()
+        }
+        Task { await loadMachines() }
+    }
+
+    private func loadRuntimeSettings() async {
+        do {
+            let data = Data(try await cli.run(["--json", "config", "show"]).utf8)
+            let config = try JSONDecoder().decode(HiveConfigDocument.self, from: data)
+            notifier.apply(config.notify)
+        } catch {
+            // Keep Hive's documented defaults until a valid config is available.
+        }
+    }
+
+    private func loadMachines() async {
+        guard let output = try? await cli.run(["--json", "machine", "list"]),
+              let data = output.data(using: .utf8),
+              let machines = try? JSONDecoder().decode([SavedHiveMachine].self, from: data) else { return }
+        self.machines = machines
+    }
+
+    func inspectMachine(_ machine: SavedHiveMachine) {
+        inspectedMachine = machine
+        machineStatus = nil
+        Task { await refreshMachineStatus() }
+    }
+
+    func refreshMachineStatus() async {
+        guard let machine = inspectedMachine, !checkingMachine else { return }
+        checkingMachine = true
+        defer { checkingMachine = false }
+        do {
+            let output = try await cli.run(["--json", "machine", "status", machine.name])
+            let statuses = try JSONDecoder().decode([HiveMachineStatus].self, from: Data(output.utf8))
+            if inspectedMachine?.name == machine.name { machineStatus = statuses.first }
+        } catch {
+            sidebarError = error.localizedDescription
+        }
     }
 
     // MARK: Workspace passthrough
@@ -53,60 +134,171 @@ final class AppViewModel: ObservableObject {
         return nil
     }
 
-    // MARK: Tabs
+    // MARK: What's in front
 
     var activeTab: WorkspaceTab? {
         tabs.first(where: { $0.id == activeTabID })
     }
 
-    var selectedAgentID: String? {
-        if case .agent(let id) = activeTab?.destination { return id }
-        return nil
+    var activeHiveTab: HiveTab? {
+        activeTab?.hiveTabID.flatMap(workspace.tab)
     }
 
-    /// The environment the active tab is working in, either directly or through its agent.
+    /// The pane keystrokes go to in the active tab.
+    var focusedPaneID: String? {
+        guard let tab = activeHiveTab else { return nil }
+        return tab.zoomed ?? tab.focused ?? tab.paneIDs.first
+    }
+
+    /// The agent the active tab is about: the one in the focused pane, else the tab's first.
+    var activeAgent: HiveAgent? {
+        guard let tab = activeHiveTab else { return nil }
+        if let paneID = focusedPaneID, let agent = workspace.agent(inPane: paneID) { return agent }
+        return agents.first(where: { $0.tabID == tab.id })
+    }
+
     var activeEnvironment: HiveEnvironment? {
-        guard let id = activeTab.flatMap({ environmentID(for: $0.destination) }) else { return nil }
+        guard let id = activeHiveTab?.environmentID else { return nil }
         return environments.first(where: { $0.id == id })
     }
 
-    func environmentID(for destination: WorkspaceDestination) -> String? {
-        switch destination {
-        case .shell(let environmentID): environmentID
-        case .agent(let id): agents.first(where: { $0.id == id })?.environmentID
-        }
+    func agents(inTab tabID: String) -> [HiveAgent] {
+        agents.filter { $0.tabID == tabID }
     }
 
-    /// Focuses a tab already working in the environment, otherwise opens one:
-    /// attached to its most relevant running agent, or a shell when it has none.
+    private func isShowing(_ agent: HiveAgent) -> Bool {
+        NSApp.isActive && agent.tabID != nil && agent.tabID == activeHiveTab?.id && !showingOverview
+    }
+
+    // MARK: Opening
+
+    /// Shows the environment: a tab already open for it, else its active Hive tab,
+    /// else a new Hive tab in it.
     func openEnvironment(_ id: String) {
-        if let tab = tabs.first(where: { environmentID(for: $0.destination) == id }) {
-            activeTabID = tab.id
-        } else if let agent = agents.filter({ $0.environmentID == id && $0.state != "exited" }).min(by: { $0.stateRank < $1.stateRank }) {
-            openAgent(agent.id)
+        if let open = tabs.first(where: { $0.hiveTabID.flatMap(workspace.tab)?.environmentID == id }) {
+            activeTabID = open.id
+            return
+        }
+        let hiveTabs = workspace.tabs.filter { $0.environmentID == id }
+        if let tab = hiveTabs.first(where: { $0.active == true }) ?? hiveTabs.first {
+            openHiveTab(tab.id)
         } else {
-            openTab(.shell(environmentID: id))
+            Task { await newHiveTab(in: id) }
         }
     }
 
+    /// Shows the agent's tab and moves Hive's focus to its pane.
     func openAgent(_ id: String) {
-        if let tab = tabs.first(where: { $0.destination == .agent(id) }) {
-            activeTabID = tab.id
-        } else {
-            openTab(.agent(id))
+        guard let agent = agents.first(where: { $0.id == id }), let tabID = agent.tabID else { return }
+        openHiveTab(tabID)
+        if let paneID = agent.paneID, workspace.tab(tabID)?.focused != paneID {
+            focusPane(paneID)
+        }
+        if agent.state == "done" {
+            Task { await workspace.markSeen(agent: id) }
         }
     }
 
-    func newShell(in environmentID: String?) {
-        openTab(.shell(environmentID: environmentID))
+    func openPane(_ id: String) {
+        guard let pane = workspace.panes[id] else { return }
+        openHiveTab(pane.tabID)
+        if workspace.tab(pane.tabID)?.focused != pane.id { focusPane(pane.id) }
     }
 
-    /// A new shell next to whatever the active tab is working on.
+    func openHiveTab(_ hiveTabID: String) {
+        showingOverview = false
+        if let open = tabs.first(where: { $0.hiveTabID == hiveTabID }) {
+            activeTabID = open.id
+        } else {
+            append(WorkspaceTab(destination: .hive(tabID: hiveTabID)))
+        }
+    }
+
+    /// A new tab next to what's in front: a Hive tab in the active environment, or a scratch shell.
     func newTab() {
-        newShell(in: activeEnvironment?.id)
+        if let environment = activeEnvironment {
+            Task { await newHiveTab(in: environment.id) }
+        } else {
+            newScratchShell()
+        }
     }
 
-    func closeTab(_ id: WorkspaceTab.ID) {
+    func newHiveTab(in environmentID: String) async {
+        await perform {
+            let tab = try await self.workspace.createTab(environmentID: environmentID)
+            self.openHiveTab(tab.id)
+        }
+    }
+
+    func newScratchShell() {
+        showingOverview = false
+        append(WorkspaceTab(destination: .scratch))
+    }
+
+    func selectTab(at index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        activeTabID = tabs[index].id
+    }
+
+    func selectAdjacentTab(_ offset: Int) {
+        guard !tabs.isEmpty else { return }
+        let current = tabs.firstIndex(where: { $0.id == activeTabID }) ?? 0
+        activeTabID = tabs[(current + offset + tabs.count) % tabs.count].id
+    }
+
+    // MARK: Closing
+
+    /// Closes a desktop tab. A Hive tab is closed in Hive too, after asking if that would stop an agent.
+    func requestCloseTab(_ id: WorkspaceTab.ID) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        guard let hiveTabID = tab.hiveTabID else { return removeTab(id) }
+        let running = agents(inTab: hiveTabID).filter { $0.state != "exited" }
+        if running.isEmpty {
+            Task { await closeHiveTab(hiveTabID) }
+        } else {
+            pendingClose = .tab(id: id, hiveTabID: hiveTabID, agents: running)
+        }
+    }
+
+    /// Takes a tab out of this window and leaves everything in it running.
+    func hideTab(_ id: WorkspaceTab.ID) {
+        removeTab(id)
+    }
+
+    func closeHiveTab(_ hiveTabID: String) async {
+        await perform { try await self.workspace.closeTab(hiveTabID) }
+        tabs.filter { $0.hiveTabID == hiveTabID }.forEach { removeTab($0.id) }
+    }
+
+    func closeOtherTabs(_ id: WorkspaceTab.ID) {
+        tabs.filter { $0.id != id }.forEach { removeTab($0.id) }
+    }
+
+    /// ⌘W: the focused pane, after asking if it runs an agent; for a scratch tab, the tab.
+    func requestCloseFocusedPane() {
+        guard let tab = activeTab else { return }
+        guard tab.hiveTabID != nil, let paneID = focusedPaneID else { return removeTab(tab.id) }
+        if let agent = workspace.agent(inPane: paneID), agent.state != "exited" {
+            pendingClose = .pane(id: paneID, agent: agent)
+        } else {
+            Task { await closePane(paneID) }
+        }
+    }
+
+    func confirm(_ pending: PendingClose) {
+        pendingClose = nil
+        switch pending {
+        case .pane(let id, _): Task { await closePane(id) }
+        case .tab(_, let hiveTabID, _): Task { await closeHiveTab(hiveTabID) }
+        }
+    }
+
+    private func append(_ tab: WorkspaceTab) {
+        tabs.append(tab)
+        activeTabID = tab.id
+    }
+
+    private func removeTab(_ id: WorkspaceTab.ID) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs.remove(at: index)
         if activeTabID == id {
@@ -114,12 +306,58 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func closeOtherTabs(_ id: WorkspaceTab.ID) {
-        tabs.removeAll { $0.id != id }
-        activeTabID = id
+    /// Hive tabs closed anywhere (here, in the TUI, by an agent) leave this window too.
+    private func dropTabsMissingFrom(_ hiveTabs: [HiveTab]) {
+        guard workspace.hasSnapshot else { return }
+        let known = Set(hiveTabs.map(\.id))
+        for tab in tabs {
+            if let id = tab.hiveTabID, !known.contains(id) { removeTab(tab.id) }
+        }
     }
 
-    /// Remembers where each shell is, so a relaunch reopens it in the same folder.
+    // MARK: Panes
+
+    /// `direction` is where the new pane goes: right or down.
+    func splitFocusedPane(_ direction: String) {
+        guard let paneID = focusedPaneID else { return }
+        Task { await perform { try await self.workspace.splitPane(paneID, direction: direction) } }
+    }
+
+    func focusPane(_ id: String) {
+        Task { await perform { try await self.workspace.focusPane(id) } }
+    }
+
+    /// Moves focus to the pane left, right, up or down of the focused one.
+    func moveFocus(_ direction: String) {
+        guard let paneID = focusedPaneID else { return }
+        Task { try? await self.workspace.focusPane(paneID, direction: direction) }
+    }
+
+    func toggleZoom() {
+        guard let tab = activeHiveTab, let paneID = focusedPaneID, tab.paneIDs.count > 1 else { return }
+        let zoomed = tab.zoomed != nil
+        Task { await perform { try await self.workspace.zoomPane(paneID, on: !zoomed) } }
+    }
+
+    func resizePane(_ id: String, direction: String, cells: Int) {
+        Task { await perform { try await self.workspace.resizePane(id, direction: direction, cells: cells) } }
+    }
+
+    func resizeHiveTab(_ id: String, width: Int, height: Int) {
+        Task { try? await self.workspace.resizeTab(id, width: width, height: height) }
+    }
+
+    func renameHiveTab(_ id: String, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        Task { await perform { try await self.workspace.renameTab(id, to: name) } }
+    }
+
+    func closePane(_ paneID: String) async {
+        await perform { try await self.workspace.closePane(paneID) }
+    }
+
+    /// Remembers where each scratch shell is, so a relaunch reopens it in the same folder.
     func updateDirectories(_ directories: [WorkspaceTab.ID: String]) {
         var changed = tabs
         for index in changed.indices {
@@ -128,27 +366,14 @@ final class AppViewModel: ObservableObject {
         if changed != tabs { tabs = changed }
     }
 
-    private func openTab(_ destination: WorkspaceDestination) {
-        let tab = WorkspaceTab(destination: destination)
-        tabs.append(tab)
-        activeTabID = tab.id
+    // MARK: Agents
+
+    func sendKeys(_ keys: [String], toAgent id: String) async {
+        await perform { try await self.workspace.sendKeys(toAgent: id, keys) }
     }
 
-    /// Restored agent tabs whose agent is gone would only show an error.
-    private func dropTabsForMissingAgents() {
-        let known = Set(agents.map(\.id))
-        for tab in tabs {
-            if case .agent(let id) = tab.destination, !known.contains(id) { closeTab(tab.id) }
-        }
-    }
-
-    // MARK: Operations
-
-    func createEnvironment(name: String, path: String) async {
-        await perform {
-            let environment = try await self.workspace.createEnvironment(id: name, root: path)
-            self.openEnvironment(environment.id)
-        }
+    func stopAgent(_ id: String) async {
+        await perform { try await self.workspace.stopAgent(id) }
     }
 
     func startAgent(kind: String, environmentID: String) async {
@@ -158,19 +383,20 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func stopAgent(_ id: String) async {
-        await perform { try await self.workspace.stopAgent(id) }
-    }
+    // MARK: Environments
 
-    func closePane(_ paneID: String) async {
-        await perform { try await self.workspace.closePane(paneID) }
+    func createEnvironment(name: String, path: String) async {
+        await perform {
+            let environment = try await self.workspace.createEnvironment(id: name, root: path)
+            self.openEnvironment(environment.id)
+        }
     }
 
     func removeEnvironment(_ id: String) async {
-        let affected = tabs.filter { environmentID(for: $0.destination) == id }.map(\.id)
+        let affected = tabs.filter { $0.hiveTabID.flatMap(workspace.tab)?.environmentID == id }.map(\.id)
         await perform {
             try await self.workspace.removeEnvironment(id)
-            affected.forEach(self.closeTab)
+            affected.forEach(self.removeTab)
         }
     }
 

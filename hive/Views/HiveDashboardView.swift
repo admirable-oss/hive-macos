@@ -5,7 +5,6 @@ private enum SidebarItem: Hashable {
     case environment(String)
     case agent(String)
 }
-
 struct HiveDashboardView: View {
     let hiveURL: URL
 
@@ -37,12 +36,17 @@ struct HiveDashboardView: View {
                     inspector
                         .inspectorColumnWidth(min: 260, ideal: 320, max: 480)
                 }
-                .toolbar { workspaceToolbar }
         }
+        .toolbar { workspaceToolbar }
         .tint(.hiveAmber)
-        .onChange(of: viewModel.tabs) { _, tabs in
-            terminals.retainSessions(for: tabs)
+        .background {
+            keyboardShortcuts.frame(width: 0, height: 0).hidden()
         }
+        .onChange(of: viewModel.tabs) { _, tabs in
+            retainSessions(for: tabs)
+        }
+        .modifier(QuickOpenOverlay(showing: $viewModel.showingQuickOpen, viewModel: viewModel))
+        .modifier(PendingCloseDialog(pending: $viewModel.pendingClose, confirm: viewModel.confirm))
         .sheet(isPresented: $showingCreateEnvironment) {
             CreateEnvironmentSheet { name, path in
                 Task { await viewModel.createEnvironment(name: name, path: path) }
@@ -52,32 +56,21 @@ struct HiveDashboardView: View {
             StartAgentSheet(
                 environments: viewModel.environments,
                 kinds: viewModel.agentKinds,
-                preferredEnvironmentID: startAgentEnvironmentID ?? viewModel.activeEnvironment?.id,
-                onStart: { kind, environmentID in
-                    Task { await viewModel.startAgent(kind: kind, environmentID: environmentID) }
-                }
+                preferredEnvironmentID: preferredStartEnvironmentID,
+                onStart: startAgent
             )
         }
-        .confirmationDialog(
-            "Remove \(environmentPendingRemoval.map(displayName) ?? "environment")?",
-            isPresented: Binding(
-                get: { environmentPendingRemoval != nil },
-                set: { if !$0 { environmentPendingRemoval = nil } }
-            ),
-            presenting: environmentPendingRemoval
-        ) { environment in
-            Button("Remove Environment", role: .destructive) {
-                Task { await viewModel.removeEnvironment(environment.id) }
-            }
-        } message: { environment in
-            Text(environment.managed
-                 ? "Its agents are stopped and the workspace Hive created is deleted."
-                 : "Its agents are stopped. Your folder stays where it is.")
-        }
+        .modifier(EnvironmentRemovalDialog(
+            environment: $environmentPendingRemoval,
+            remove: { id in Task { await viewModel.removeEnvironment(id) } }
+        ))
         .sheet(isPresented: $showingAddMachine) {
             AddMachineSheet { name, host in
                 Task { await viewModel.addMachine(name: name, host: host) }
             }
+        }
+        .sheet(item: $viewModel.inspectedMachine) { machine in
+            MachineInspectorView(machine: machine, viewModel: viewModel)
         }
         .task { viewModel.start() }
         .onChange(of: viewModel.activeTabID) { saveDirectories() }
@@ -85,6 +78,64 @@ struct HiveDashboardView: View {
             saveDirectories()
         }
         .frame(minWidth: 820, minHeight: 540)
+    }
+
+    private var keyboardShortcuts: some View {
+            VStack(spacing: 0) {
+                Button { viewModel.showingQuickOpen = true } label: { EmptyView() }
+                    .keyboardShortcut("k", modifiers: .command)
+                Button { viewModel.showingOverview.toggle() } label: { EmptyView() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                Button { viewModel.requestCloseFocusedPane() } label: { EmptyView() }
+                    .keyboardShortcut("w", modifiers: .command)
+                Button { viewModel.selectAdjacentTab(-1) } label: { EmptyView() }
+                    .keyboardShortcut(.leftArrow, modifiers: [.control, .shift])
+                Button { viewModel.selectAdjacentTab(1) } label: { EmptyView() }
+                    .keyboardShortcut(.rightArrow, modifiers: [.control, .shift])
+                Button { viewModel.splitFocusedPane("right") } label: { EmptyView() }
+                    .keyboardShortcut("d", modifiers: .command)
+                Button { viewModel.splitFocusedPane("down") } label: { EmptyView() }
+                    .keyboardShortcut("d", modifiers: [.command, .shift])
+                Button { viewModel.toggleZoom() } label: { EmptyView() }
+                    .keyboardShortcut("m", modifiers: [.command, .shift])
+                Button { viewModel.moveFocus("left") } label: { EmptyView() }
+                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                Button { viewModel.moveFocus("right") } label: { EmptyView() }
+                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                Button { viewModel.moveFocus("up") } label: { EmptyView() }
+                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                Button { viewModel.moveFocus("down") } label: { EmptyView() }
+                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                Button("1") { viewModel.selectTab(at: 0) }.keyboardShortcut("1", modifiers: .command)
+                Button("2") { viewModel.selectTab(at: 1) }.keyboardShortcut("2", modifiers: .command)
+                Button("3") { viewModel.selectTab(at: 2) }.keyboardShortcut("3", modifiers: .command)
+                Button("4") { viewModel.selectTab(at: 3) }.keyboardShortcut("4", modifiers: .command)
+                Button("5") { viewModel.selectTab(at: 4) }.keyboardShortcut("5", modifiers: .command)
+                Button("6") { viewModel.selectTab(at: 5) }.keyboardShortcut("6", modifiers: .command)
+                Button("7") { viewModel.selectTab(at: 6) }.keyboardShortcut("7", modifiers: .command)
+                Button("8") { viewModel.selectTab(at: 7) }.keyboardShortcut("8", modifiers: .command)
+                Button("9") { viewModel.selectTab(at: 8) }.keyboardShortcut("9", modifiers: .command)
+            }
+    }
+
+    private var preferredStartEnvironmentID: String? { startAgentEnvironmentID ?? viewModel.activeEnvironment?.id }
+
+    private func startAgent(kind: String, environmentID: String) {
+        Task { await viewModel.startAgent(kind: kind, environmentID: environmentID) }
+    }
+
+    private func retainSessions(for tabs: [WorkspaceTab]) {
+        var scratchIDs: [WorkspaceTab.ID] = []
+        var paneIDs: Set<String> = []
+        for tab in tabs {
+            switch tab.destination {
+            case .scratch:
+                scratchIDs.append(tab.id)
+            case .hive(let id):
+                if let hiveTab = viewModel.workspace.tab(id) { paneIDs.formUnion(hiveTab.paneIDs) }
+            }
+        }
+        terminals.retain(scratchTabs: scratchIDs, panes: paneIDs)
     }
 
     // MARK: - Toolbar
@@ -95,7 +146,7 @@ struct HiveDashboardView: View {
             WorkspaceTabBar(
                 items: viewModel.tabs.map { WorkspaceTabBar.Item(id: $0.id, title: title(for: $0.destination)) },
                 activeID: $viewModel.activeTabID,
-                onClose: viewModel.closeTab,
+                onClose: viewModel.requestCloseTab,
                 onCloseOthers: viewModel.closeOtherTabs
             )
         }
@@ -113,6 +164,12 @@ struct HiveDashboardView: View {
 
                 inspectorToggle(.files)
                 inspectorToggle(.changes)
+                inspectorToggle(.agent)
+                Button { viewModel.showingOverview.toggle() } label: {
+                    Label("Overview", systemImage: "rectangle.grid.2x2")
+                }
+                .buttonStyle(ToolbarPillButtonStyle(isActive: viewModel.showingOverview))
+                .help("Overview (⇧⌘O)")
             }
         }
         .flatToolbarBackground()
@@ -134,17 +191,19 @@ struct HiveDashboardView: View {
     @ViewBuilder
     private var inspector: some View {
         let changeToken = AnyHashable(viewModel.activeEnvironment?.git)
-        if let tab = viewModel.activeTab {
+        if let tab = viewModel.activeTab, case .scratch = tab.destination {
             ActiveTerminalInspector(
-                session: terminals.session(for: tab) { makeSession(for: tab) },
+                session: terminals.scratchSession(for: tab) { makeScratchSession(for: tab) },
                 panel: lastInspectorPanel,
-                changeToken: changeToken
+                changeToken: changeToken,
+                viewModel: viewModel
             )
         } else {
             WorkspaceInspectorView(
                 panel: lastInspectorPanel,
-                directory: FileManager.default.homeDirectoryForCurrentUser.path,
-                changeToken: changeToken
+                directory: viewModel.activeEnvironment?.path ?? FileManager.default.homeDirectoryForCurrentUser.path,
+                changeToken: changeToken,
+                viewModel: viewModel
             )
         }
     }
@@ -158,13 +217,12 @@ struct HiveDashboardView: View {
 
     private func title(for destination: WorkspaceDestination) -> String {
         switch destination {
-        case .shell(let environmentID):
-            guard let environmentID else { return "zsh · ~" }
-            let environment = viewModel.environments.first(where: { $0.id == environmentID })
-            return "zsh · \(environment.map(displayName) ?? environmentID)"
-        case .agent(let id):
-            guard let agent = viewModel.agents.first(where: { $0.id == id }) else { return id }
-            return "\(agent.name.isEmpty ? agent.kind : agent.name) · \(agent.environmentID)"
+        case .scratch:
+            return "zsh · ~"
+        case .hive(let id):
+            guard let tab = viewModel.workspace.tab(id) else { return "Hive Tab" }
+            let environment = viewModel.environments.first(where: { $0.id == tab.environmentID })
+            return "\(tab.name) · \(environment.map(displayName) ?? tab.environmentID)"
         }
     }
 
@@ -221,7 +279,7 @@ struct HiveDashboardView: View {
         let ports = viewModel.listeningPorts[environment.id] ?? []
 
         Button("Open") { viewModel.openEnvironment(environment.id) }
-        Button("New Terminal Here") { viewModel.newShell(in: environment.id) }
+        Button("New Hive Tab Here") { Task { await viewModel.newHiveTab(in: environment.id) } }
         Button("Start Agent Here…") { startAgent(in: environment.id) }
 
         Divider()
@@ -258,7 +316,7 @@ struct HiveDashboardView: View {
     @ViewBuilder
     private func agentMenu(_ agent: HiveAgent) -> some View {
         Button("Open") { viewModel.openAgent(agent.id) }
-        Button("New Terminal in \(agent.environmentID)") { viewModel.newShell(in: agent.environmentID) }
+        Button("New Hive Tab in \(agent.environmentID)") { Task { await viewModel.newHiveTab(in: agent.environmentID) } }
 
         Divider()
 
@@ -352,44 +410,49 @@ struct HiveDashboardView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let tab = viewModel.activeTab {
-            TerminalTabView(
-                session: terminals.session(for: tab) { makeSession(for: tab) },
-                onClose: { viewModel.closeTab(tab.id) }
-            )
+        if viewModel.showingOverview {
+            OverviewView(viewModel: viewModel)
+        } else if let tab = viewModel.activeTab {
+            Group {
+                switch tab.destination {
+                case .hive(let id):
+                    if let hiveTab = viewModel.workspace.tab(id) {
+                        HiveTabView(tab: hiveTab, viewModel: viewModel, terminals: terminals)
+                    } else {
+                        ProgressView("Loading tab…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                case .scratch:
+                    TerminalSurface(
+                        session: terminals.scratchSession(for: tab) { makeScratchSession(for: tab) },
+                        onClose: { viewModel.requestCloseTab(tab.id) }
+                    )
+                }
+            }
             .id(tab.id)
         } else {
             NoTerminalsView(onNewTerminal: viewModel.newTab)
         }
     }
 
-    private func makeSession(for tab: WorkspaceTab) -> TerminalSession {
+    private func makeScratchSession(for tab: WorkspaceTab) -> ShellTerminalSession {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let environmentPath = viewModel.environmentID(for: tab.destination)
-            .flatMap { id in viewModel.environments.first(where: { $0.id == id })?.path }
-
-        switch tab.destination {
-        case .agent(let id):
-            return AgentTerminalSession(agentID: id, directory: environmentPath ?? home, workspace: viewModel.workspace)
-        case .shell:
-            // Reopen a restored shell where it last was, if that folder still exists.
-            let directory = tab.directory.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil }
-                ?? environmentPath ?? home
-            return ShellTerminalSession(launch: TerminalLaunch(executable: "/bin/zsh", arguments: [], execName: "-zsh", directory: directory))
-        }
+        let directory = tab.directory.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil } ?? home
+        return ShellTerminalSession(launch: TerminalLaunch(executable: "/bin/zsh", arguments: [], execName: "-zsh", directory: directory))
     }
 
     private func saveDirectories() {
-        viewModel.updateDirectories(terminals.currentDirectories)
+        viewModel.updateDirectories(terminals.scratchDirectories)
     }
 
     private var sidebarSelection: Binding<SidebarItem?> {
         Binding(
             get: {
                 switch viewModel.activeTab?.destination {
-                case .agent(let id): .agent(id)
-                case .shell(let environmentID?): .environment(environmentID)
-                case .shell(nil), nil: nil
+                case .hive(let id):
+                    if let agent = viewModel.agents.first(where: { $0.tabID == id }) { .agent(agent.id) }
+                    else if let environmentID = viewModel.workspace.tab(id)?.environmentID { .environment(environmentID) }
+                    else { nil }
+                case .scratch, nil: nil
                 }
             },
             set: { item in
@@ -421,6 +484,74 @@ struct HiveDashboardView: View {
             $0.name.localizedCaseInsensitiveContains(searchText) ||
             $0.kind.localizedCaseInsensitiveContains(searchText) ||
             $0.environmentID.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+}
+
+private struct EnvironmentRemovalDialog: ViewModifier {
+    @Binding var environment: HiveEnvironment?
+    let remove: (String) -> Void
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            "Remove \(environment.map { $0.name.isEmpty ? $0.id : $0.name } ?? "environment")?",
+            isPresented: Binding(
+                get: { environment != nil },
+                set: { if !$0 { environment = nil } }
+            ),
+            presenting: environment
+        ) { environment in
+            Button("Remove Environment", role: .destructive) { remove(environment.id) }
+        } message: { environment in
+            Text(environment.managed
+                 ? "Its agents are stopped and the workspace Hive created is deleted."
+                 : "Its agents are stopped. Your folder stays where it is.")
+        }
+    }
+}
+
+private struct PendingCloseDialog: ViewModifier {
+    @Binding var pending: AppViewModel.PendingClose?
+    let confirm: (AppViewModel.PendingClose) -> Void
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            "Close?",
+            isPresented: Binding(
+                get: { pending != nil },
+                set: { if !$0 { pending = nil } }
+            ),
+            presenting: pending
+        ) { item in
+            switch item {
+            case .pane:
+                Button("Close Pane and Stop Agent", role: .destructive) { confirm(item) }
+            case .tab:
+                Button("Close Tab and Stop Agents", role: .destructive) { confirm(item) }
+            }
+            Button("Cancel", role: .cancel) { pending = nil }
+        } message: { item in
+            switch item {
+            case .pane(_, let agent): Text("This stops \(agent.name.isEmpty ? agent.kind : agent.name).")
+            case .tab(_, _, let agents): Text("This stops \(agents.count) running agent\(agents.count == 1 ? "" : "s").")
+            }
+        }
+    }
+}
+
+private struct QuickOpenOverlay: ViewModifier {
+    @Binding var showing: Bool
+    @ObservedObject var viewModel: AppViewModel
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if showing {
+                ZStack {
+                    Color.black.opacity(0.12).ignoresSafeArea().onTapGesture { showing = false }
+                    QuickOpenView(viewModel: viewModel)
+                }
+                .transition(.opacity)
+            }
         }
     }
 }
@@ -548,9 +679,10 @@ private struct ActiveTerminalInspector: View {
     @ObservedObject var session: TerminalSession
     let panel: InspectorPanel
     let changeToken: AnyHashable
+    @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
-        WorkspaceInspectorView(panel: panel, directory: session.currentDirectory, changeToken: changeToken)
+        WorkspaceInspectorView(panel: panel, directory: session.currentDirectory, changeToken: changeToken, viewModel: viewModel)
     }
 }
 
@@ -723,29 +855,5 @@ private struct AddMachineSheet: View {
         }
         .padding(24)
         .frame(width: 430)
-    }
-}
-
-private func agentStateColor(_ state: String) -> Color {
-    switch state {
-    case "working": .hiveAmber
-    case "blocked": .red
-    case "done": .blue
-    case "idle": .secondary
-    case "unknown": .secondary
-    case "exited": .secondary
-    default: .secondary
-    }
-}
-
-private func agentStateTitle(_ state: String) -> String {
-    switch state {
-    case "working": "Running"
-    case "blocked": "Needs you"
-    case "done": "Finished"
-    case "idle": "Ready"
-    case "unknown": "Checking"
-    case "exited": "Closed"
-    default: state.capitalized
     }
 }

@@ -22,6 +22,11 @@ final class HiveWorkspaceStore: ObservableObject {
 
     /// Called after every snapshot is applied, with whether it was the first one.
     var onSnapshot: ((_ isFirst: Bool) -> Void)?
+    /// Called when an `agent.state` event changes an agent, with its previous record.
+    var onAgentChange: ((_ previous: HiveAgent?, _ agent: HiveAgent) -> Void)?
+
+    /// Whether at least one snapshot has been applied since launch.
+    private(set) var hasSnapshot = false
 
     /// Oldest daemon this app can drive: `api.snapshot` and agent operations arrived at level 5.
     static let minimumAPILevel = 5
@@ -31,7 +36,6 @@ final class HiveWorkspaceStore: ObservableObject {
     private var connectionTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var portScanTask: Task<Void, Never>?
-    private var hasSnapshot = false
     private let decoder = JSONDecoder()
 
     init(hiveURL: URL) {
@@ -191,7 +195,11 @@ final class HiveWorkspaceStore: ObservableObject {
                 scheduleSnapshot()
             case "agent.state":
                 let agent = try decode(HiveAgent.self, from: data)
-                if agent.isCodingAgent { upsert(agent, into: &agents) }
+                if agent.isCodingAgent {
+                    let previous = agents.first(where: { $0.id == agent.id })
+                    upsert(agent, into: &agents)
+                    if previous != agent { onAgentChange?(previous, agent) }
+                }
             case "process.output":
                 break
             default:
@@ -213,10 +221,17 @@ final class HiveWorkspaceStore: ObservableObject {
 
     // MARK: Lookups
 
-    /// The terminal process behind an agent's pane, which `terminal.attach` needs.
-    func processID(forAgent id: String) -> String? {
-        guard let paneID = agents.first(where: { $0.id == id })?.paneID else { return nil }
-        return panes[paneID]?.processID
+    func tab(_ id: String) -> HiveTab? {
+        tabs.first(where: { $0.id == id })
+    }
+
+    /// The agent running in a pane, if any.
+    func agent(inPane paneID: String) -> HiveAgent? {
+        agents.first(where: { $0.paneID == paneID })
+    }
+
+    func process(forPane paneID: String) -> HiveProcess? {
+        panes[paneID].flatMap { processes[$0.processID] }
     }
 
     // MARK: Operations
@@ -236,6 +251,8 @@ final class HiveWorkspaceStore: ObservableObject {
     func startAgent(kind: String, environmentID: String) async throws -> HiveAgent {
         let started = try decode(HiveAgentStarted.self, from: try await call("agent.start", ["kind": kind, "environment_id": environmentID]))
         upsert(started.agent, into: &agents)
+        upsert(started.tab, into: &tabs)
+        panes[started.pane.id] = started.pane
         // The new pane's process arrives with the snapshot; attach needs it.
         scheduleSnapshot()
         return started.agent
@@ -259,6 +276,117 @@ final class HiveWorkspaceStore: ObservableObject {
 
     func resize(processID: String, viewID: String, width: Int, height: Int) async throws {
         _ = try await call("terminal.resize", ["process_id": processID, "view_id": viewID, "width": width, "height": height])
+    }
+
+    // MARK: Tabs and panes
+
+    @discardableResult
+    func createTab(environmentID: String) async throws -> HiveTab {
+        let created = try decode(HiveTabCreated.self, from: try await call("tab.create", ["environment_id": environmentID]))
+        upsert(created.tab, into: &tabs)
+        panes[created.pane.id] = created.pane
+        scheduleSnapshot()
+        return created.tab
+    }
+
+    func closeTab(_ id: String) async throws {
+        _ = try await call("tab.close", ["id": id])
+        tabs.removeAll { $0.id == id }
+    }
+
+    func renameTab(_ id: String, to name: String) async throws {
+        upsert(try decode(HiveTab.self, from: try await call("tab.rename", ["id": id, "name": name])), into: &tabs)
+    }
+
+    /// Tells Hive how many cells the desktop shows the tab in, so it lays the panes out for it.
+    func resizeTab(_ id: String, width: Int, height: Int) async throws {
+        guard width > 0, height > 0 else { return }
+        upsert(try decode(HiveTab.self, from: try await call("tab.resize", ["id": id, "width": width, "height": height])), into: &tabs)
+    }
+
+    /// Splits a pane: `direction` is where the new pane goes (right, left, down, up).
+    func splitPane(_ id: String, direction: String) async throws {
+        let pane = try decode(HivePane.self, from: try await call("pane.split", ["pane": id, "direction": direction]))
+        panes[pane.id] = pane
+        // The tab's new layout and the new process arrive as events; settle anything missed.
+        scheduleSnapshot()
+    }
+
+    /// Focuses a pane, or with a direction its neighbour that way.
+    func focusPane(_ id: String, direction: String? = nil) async throws {
+        var params: [String: Any] = ["id": id]
+        if let direction { params["direction"] = direction }
+        _ = try await call("pane.focus", params)
+    }
+
+    func zoomPane(_ id: String, on: Bool) async throws {
+        _ = try await call("pane.zoom", ["id": id, "on": on])
+    }
+
+    /// Moves a pane's border by `cells` in `direction`; negative shrinks it.
+    func resizePane(_ id: String, direction: String, cells: Int) async throws {
+        guard cells != 0 else { return }
+        _ = try await call("pane.resize", ["id": id, "direction": direction, "cells": cells])
+    }
+
+    func renamePane(_ id: String, to name: String) async throws {
+        _ = try await call("pane.rename", ["id": id, "name": name])
+    }
+
+    // MARK: Agents
+
+    /// Presses named keys in an agent: Enter, Escape, Up, C-c, y, …
+    func sendKeys(toAgent id: String, _ keys: [String]) async throws {
+        _ = try await call("agent.send_keys", ["id": id, "keys": keys])
+    }
+
+    func prompt(agent id: String, text: String, wait: Bool) async throws -> HivePromptResult {
+        var params: [String: Any] = ["id": id, "text": text, "wait": wait]
+        if wait { params["read"] = 40 }
+        return try decode(HivePromptResult.self, from: try await call("agent.prompt", params))
+    }
+
+    func explain(agent id: String) async throws -> HiveAgentExplanation {
+        try decode(HiveAgentExplanation.self, from: try await call("agent.explain", ["id": id]))
+    }
+
+    /// Marks a finished agent as looked at, so it stops asking for attention.
+    func markSeen(agent id: String) async {
+        _ = try? await call("agent.seen", ["id": id])
+    }
+
+    /// The last lines a pane shows, as plain text.
+    func readPane(_ id: String, lines: Int) async throws -> [String] {
+        try decode([String].self, from: try await call("pane.read", ["id": id, "lines": lines]))
+    }
+
+    /// Hands a PNG to a terminal's program (`terminal.image`): Hive delivers it as an
+    /// inline image where the program supports that, or saves it and pastes the path.
+    @discardableResult
+    func sendImage(png: Data, toProcess processID: String, viewID: String?) async throws -> HiveImageReceipt {
+        guard let client else { throw HiveSocketError.disconnected }
+        var params: [String: Any] = [
+            "process_id": processID,
+            "transfer_id": UUID().uuidString.lowercased(),
+            "format": "png",
+            "size": png.count,
+            "sha256": SHA256Hex.digest(png),
+        ]
+        if let viewID { params["view_id"] = viewID }
+        let opened = try await client.openPipe("terminal.image", params: try JSONSerialization.data(withJSONObject: params))
+        defer { opened.pipe.close() }
+        let early = try decode(HiveImageReceipt.self, from: opened.result)
+        if early.done == true { return early }
+
+        opened.pipe.send(png)
+        var buffer = Data()
+        for await chunk in opened.pipe.incoming {
+            buffer.append(chunk)
+            if let newline = buffer.firstIndex(of: 0x0A) {
+                return try decode(HiveImageReceipt.self, from: buffer[buffer.startIndex..<newline])
+            }
+        }
+        throw opened.pipe.closeError ?? HiveAPIError(code: "unavailable", message: "Hive closed the image transfer without a receipt.")
     }
 
     private func call(_ method: String, _ params: [String: Any]) async throws -> Data {
