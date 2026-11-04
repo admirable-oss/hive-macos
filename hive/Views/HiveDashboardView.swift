@@ -20,6 +20,7 @@ struct HiveDashboardView: View {
     @State private var startAgentEnvironmentID: String?
     @State private var environmentPendingRemoval: HiveEnvironment?
     @State private var showingAddMachine = false
+    @State private var worktreeRepository: HiveEnvironment?
 
     init(hiveURL: URL) {
         self.hiveURL = hiveURL
@@ -59,6 +60,11 @@ struct HiveDashboardView: View {
                 preferredEnvironmentID: preferredStartEnvironmentID,
                 onStart: startAgent
             )
+        }
+        .sheet(item: $worktreeRepository) { environment in
+            NewWorktreeSheet(environment: environment, kinds: viewModel.agentKinds) { branch, base, agent in
+                Task { await viewModel.createWorktree(repo: environment.path, branch: branch, base: base, startAgent: agent) }
+            }
         }
         .modifier(EnvironmentRemovalDialog(
             environment: $environmentPendingRemoval,
@@ -239,10 +245,16 @@ struct HiveDashboardView: View {
                             action: { showingCreateEnvironment = true }
                         )
                     } else {
-                        ForEach(filteredEnvironments) { environment in
-                            EnvironmentSidebarRow(environment: environment, ports: viewModel.listeningPorts[environment.id] ?? [])
-                                .tag(SidebarItem.environment(environment.id))
-                                .contextMenu { environmentMenu(environment) }
+                        ForEach(nonWorktreeEnvironments) { environment in environmentSidebarRow(environment) }
+                        ForEach(worktreeRepositories, id: \.self) { repo in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label(URL(fileURLWithPath: repo).lastPathComponent, systemImage: "arrow.triangle.branch")
+                                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                    .padding(.leading, 8).selectionDisabled()
+                                ForEach(worktreeEnvironments(in: repo)) { environment in
+                                    environmentSidebarRow(environment).padding(.leading, 14)
+                                }
+                            }
                         }
                     }
                 } header: {
@@ -281,6 +293,9 @@ struct HiveDashboardView: View {
         Button("Open") { viewModel.openEnvironment(environment.id) }
         Button("New Hive Tab Here") { Task { await viewModel.newHiveTab(in: environment.id) } }
         Button("Start Agent Here…") { startAgent(in: environment.id) }
+        if environment.worktree == nil {
+            Button("New Worktree…") { worktreeRepository = environment }
+        }
 
         Divider()
 
@@ -475,6 +490,23 @@ struct HiveDashboardView: View {
             $0.name.localizedCaseInsensitiveContains(searchText) ||
             $0.path.localizedCaseInsensitiveContains(searchText)
         }
+    }
+
+    private var nonWorktreeEnvironments: [HiveEnvironment] { filteredEnvironments.filter { $0.worktree == nil } }
+
+    private var worktreeRepositories: [String] {
+        Array(Set(filteredEnvironments.compactMap { $0.worktree?.repo })).sorted()
+    }
+
+    private func worktreeEnvironments(in repo: String) -> [HiveEnvironment] {
+        filteredEnvironments.filter { $0.worktree?.repo == repo }.sorted { ($0.worktree?.branch ?? $0.name) < ($1.worktree?.branch ?? $1.name) }
+    }
+
+    @ViewBuilder
+    private func environmentSidebarRow(_ environment: HiveEnvironment) -> some View {
+        EnvironmentSidebarRow(environment: environment, ports: viewModel.listeningPorts[environment.id] ?? [])
+            .tag(SidebarItem.environment(environment.id))
+            .contextMenu { environmentMenu(environment) }
     }
 
     private var filteredAgents: [HiveAgent] {
@@ -825,6 +857,48 @@ private struct StartAgentSheet: View {
                 .background(.regularMaterial)
             }
         }
+    }
+}
+
+private struct NewWorktreeSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let environment: HiveEnvironment
+    let kinds: [HiveAgentManifest]
+    let onCreate: (String, String?, String?) -> Void
+    @State private var branch = ""
+    @State private var base = ""
+    @State private var startAgent = false
+    @State private var selectedKind = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("New worktree").font(.title2.weight(.semibold))
+            Text("Create a branch and worktree from \(environment.path).")
+                .font(.callout).foregroundStyle(.secondary).lineLimit(2)
+            TextField("Branch name", text: $branch).textFieldStyle(.roundedBorder)
+            TextField("Base branch (optional)", text: $base).textFieldStyle(.roundedBorder)
+            Toggle("Start an agent after creation", isOn: $startAgent)
+            if startAgent {
+                Picker("Agent", selection: $selectedKind) {
+                    ForEach(kinds) { kind in Text(kind.name.isEmpty ? kind.id : kind.name).tag(kind.id) }
+                }
+                .disabled(kinds.isEmpty)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Create worktree") {
+                    onCreate(branch.trimmingCharacters(in: .whitespacesAndNewlines), base.isEmpty ? nil : base, startAgent ? selectedKind : nil)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (startAgent && selectedKind.isEmpty))
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 440)
+        .onAppear { selectedKind = kinds.first?.id ?? "" }
     }
 }
 

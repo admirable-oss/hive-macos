@@ -194,8 +194,12 @@ struct AgentInspectorView: View {
         HStack {
             Button("Show Pane") { viewModel.openAgent(agent.id) }
             Spacer()
-            Button("Stop Agent", role: .destructive) { Task { await viewModel.stopAgent(agent.id) } }
-                .disabled(isExited)
+            if isExited {
+                Button("Resume Agent") { Task { await viewModel.resumeAgent(agent.id) } }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Button("Stop Agent", role: .destructive) { Task { await viewModel.stopAgent(agent.id) } }
+            }
         }
         .controlSize(.small)
     }

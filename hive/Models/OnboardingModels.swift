@@ -29,6 +29,12 @@ struct HiveEnvironment: Decodable, Identifiable, Hashable {
     let managed: Bool
     let status: String
     var git: HiveGitStatus?
+    var worktree: HiveWorktree?
+}
+
+struct HiveWorktree: Decodable, Hashable {
+    let repo: String
+    let branch: String
 }
 
 struct HiveGitStatus: Decodable, Hashable {

@@ -243,6 +243,15 @@ final class HiveWorkspaceStore: ObservableObject {
         return environment
     }
 
+    @discardableResult
+    func createWorktree(repo: String, branch: String, base: String? = nil) async throws -> HiveEnvironment {
+        var params: [String: Any] = ["repo": repo, "branch": branch]
+        if let base, !base.isEmpty { params["base"] = base }
+        let environment = try decode(HiveEnvironment.self, from: try await call("worktree.create", params))
+        upsert(environment, into: &environments)
+        return environment
+    }
+
     func removeEnvironment(_ id: String) async throws {
         _ = try await call("environment.remove", ["id": id])
         environments.removeAll { $0.id == id }
@@ -260,6 +269,15 @@ final class HiveWorkspaceStore: ObservableObject {
 
     func stopAgent(_ id: String) async throws {
         _ = try await call("agent.stop", ["id": id])
+    }
+
+    func resumeAgent(_ id: String) async throws -> HiveAgent {
+        let started = try decode(HiveAgentStarted.self, from: try await call("agent.resume", ["id": id]))
+        upsert(started.agent, into: &agents)
+        upsert(started.tab, into: &tabs)
+        panes[started.pane.id] = started.pane
+        scheduleSnapshot()
+        return started.agent
     }
 
     func closePane(_ id: String) async throws {

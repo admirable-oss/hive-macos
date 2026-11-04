@@ -376,6 +376,13 @@ final class AppViewModel: ObservableObject {
         await perform { try await self.workspace.stopAgent(id) }
     }
 
+    func resumeAgent(_ id: String) async {
+        await perform {
+            let agent = try await self.workspace.resumeAgent(id)
+            self.openAgent(agent.id)
+        }
+    }
+
     func startAgent(kind: String, environmentID: String) async {
         await perform {
             let agent = try await self.workspace.startAgent(kind: kind, environmentID: environmentID)
@@ -389,6 +396,17 @@ final class AppViewModel: ObservableObject {
         await perform {
             let environment = try await self.workspace.createEnvironment(id: name, root: path)
             self.openEnvironment(environment.id)
+        }
+    }
+
+    func createWorktree(repo: String, branch: String, base: String?, startAgent: String?) async {
+        await perform {
+            let environment = try await self.workspace.createWorktree(repo: repo, branch: branch, base: base)
+            self.openEnvironment(environment.id)
+            if let startAgent, !startAgent.isEmpty {
+                let agent = try await self.workspace.startAgent(kind: startAgent, environmentID: environment.id)
+                self.openAgent(agent.id)
+            }
         }
     }
 

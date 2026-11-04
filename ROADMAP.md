@@ -155,6 +155,8 @@ The original plan:
 
 ### Phase 1: TUI parity for daily use (P0–P1)
 
+**Status: Complete (2026-11-04).**
+
 1. **Hive tabs and panes, natively.** Desktop tabs are Hive tabs, so the TUI and the app always show
    the same workspace.
    - Each pane is its own SwiftTerm view inside a native split view.
@@ -174,6 +176,8 @@ The original plan:
    - A prompt box (`agent prompt`, with an optional "wait for the answer").
 
 ### Phase 2: Agent workflows (P1)
+
+**In progress.**
 
 1. **Worktrees.** "New Worktree…" from an environment's right-click menu:
    - Pick a branch, create the worktree and its environment, and optionally start an agent in it.
