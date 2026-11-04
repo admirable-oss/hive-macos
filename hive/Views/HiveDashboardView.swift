@@ -287,45 +287,87 @@ struct HiveDashboardView: View {
         .flatToolbarBackground()
 
         ToolbarItem(placement: .primaryAction) {
-            HStack(spacing: 4) {
+            HStack(spacing: 8) {
+                // Main View Switcher
+                HStack(spacing: 0) {
+                    modeButton(systemImage: "tray.full", isActive: viewModel.showingInbox, color: .hiveAmber) {
+                        viewModel.showInbox(true); viewModel.showOverview(false)
+                    }
+                    modeButton(systemImage: "terminal", isActive: !viewModel.showingInbox && !viewModel.showingOverview, color: .primary) {
+                        viewModel.showInbox(false); viewModel.showOverview(false)
+                    }
+                    modeButton(systemImage: "rectangle.grid.2x2", isActive: viewModel.showingOverview, color: .hiveAmber) {
+                        viewModel.showOverview(true); viewModel.showInbox(false)
+                    }
+                }
+                .padding(2)
+                .background(Capsule().fill(Color.primary.opacity(0.06)))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.04), lineWidth: 0.5))
+
+                Divider()
+                    .frame(height: 12)
+                    .opacity(0.2)
+
+                // Compact Groups
+                HStack(spacing: 4) {
+                    HStack(spacing: 0) {
+                        inspectorToggle(.files)
+                        inspectorToggle(.changes)
+                        inspectorToggle(.agent)
+                    }
+                    
+                    Divider()
+                        .frame(height: 12)
+                        .opacity(0.2)
+                        .padding(.horizontal, 2)
+                    
+                    HStack(spacing: 0) {
+                        Button { reviewEnvironment = viewModel.activeEnvironment } label: {
+                            Image(systemName: "checkmark.seal")
+                        }
+                        .buttonStyle(ToolbarPillButtonStyle())
+                        .disabled(viewModel.activeEnvironment == nil)
+                        
+                        Button { showingTaskCenter = true } label: {
+                            Image(systemName: "checklist")
+                        }
+                        .buttonStyle(ToolbarPillButtonStyle())
+
+                        commandCenterMenu
+                    }
+                }
+
                 Button(action: viewModel.newTab) {
                     Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 20, height: 20)
+                        .background(Color.hiveAmber, in: Circle())
                 }
-                .buttonStyle(ToolbarPillButtonStyle())
-                .keyboardShortcut("t", modifiers: .command)
-                .help("New terminal (⌘T)")
-                .accessibilityLabel("New terminal")
-
-                inspectorToggle(.files)
-                inspectorToggle(.changes)
-                inspectorToggle(.agent)
-                Button { reviewEnvironment = viewModel.activeEnvironment } label: { Label("Review", systemImage: "checkmark.seal") }
-                    .buttonStyle(ToolbarPillButtonStyle())
-                    .disabled(viewModel.activeEnvironment == nil)
-                    .help("Review changes, tasks and agent output for the active environment")
-                Button { showingTaskCenter = true } label: { Label("Tasks", systemImage: "checklist") }
-                    .buttonStyle(ToolbarPillButtonStyle())
-                    .help("Tasks and plans")
-                Button { showingLayoutManager = true } label: { Label("Layouts", systemImage: "rectangle.3.group") }
-                    .buttonStyle(ToolbarPillButtonStyle())
-                    .help("Export or apply a workspace layout")
-                Button { showingObservers = true } label: { Label("Observers", systemImage: "eye") }
-                    .buttonStyle(ToolbarPillButtonStyle())
-                    .help("Manage read-only web observer credentials")
-                Button { viewModel.showInbox(!viewModel.showingInbox) } label: {
-                    Label("Inbox", systemImage: "tray.full")
-                }
-                .buttonStyle(ToolbarPillButtonStyle(isActive: viewModel.showingInbox))
-                .help("Inbox — everything that needs you (⇧⌘I)")
-                Button { viewModel.showOverview(!viewModel.showingOverview) } label: {
-                    Label("Overview", systemImage: "rectangle.grid.2x2")
-                }
-                .buttonStyle(ToolbarPillButtonStyle(isActive: viewModel.showingOverview))
-                .help("Overview (⇧⌘O)")
-                commandCenterMenu
+                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(.ultraThinMaterial).opacity(0.5))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
         }
-        .flatToolbarBackground()
+    }
+
+    private func modeButton(systemImage: String, isActive: Bool, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: isActive ? "\(systemImage).fill" : systemImage)
+                .font(.system(size: 11, weight: isActive ? .bold : .medium))
+                .foregroundStyle(isActive ? color : .secondary)
+                .frame(width: 28, height: 22)
+                .background {
+                    if isActive {
+                        Capsule()
+                            .fill(.ultraThinMaterial)
+                            .shadow(color: .black.opacity(0.05), radius: 1, y: 0.5)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
     }
 
     private func inspectorToggle(_ panel: InspectorPanel) -> some View {
@@ -334,8 +376,8 @@ struct HiveDashboardView: View {
             if isOpening { lastInspectorPanel = panel }
             withAnimation(.easeInOut(duration: 0.2)) { inspectorPanel = isOpening ? panel : nil }
         } label: {
-            Label(panel.title, systemImage: panel.symbol)
-                .labelStyle(.titleAndIcon)
+            Image(systemName: panel.symbol)
+                .font(.system(size: 12, weight: .medium))
         }
         .buttonStyle(ToolbarPillButtonStyle(isActive: inspectorPanel == panel))
         .help(inspectorPanel == panel ? "Hide \(panel.title.lowercased())" : "Show \(panel.title.lowercased())")
@@ -347,6 +389,8 @@ struct HiveDashboardView: View {
             Button { showingWorkspaceViews = true } label: { Label("Saved views…", systemImage: "rectangle.3.group.bubble.left") }
             Button { showingDelegation = true } label: { Label("Delegate a helper…", systemImage: "arrow.triangle.branch") }
             Divider()
+            Button { showingObservers = true } label: { Label("Observers…", systemImage: "eye") }
+            Button { showingLayoutManager = true } label: { Label("Workspace layouts…", systemImage: "rectangle.3.group") }
             Button { showingActivity = true } label: { Label("Activity & sessions…", systemImage: "clock.arrow.circlepath") }
             Button { showingUsage = true } label: { Label("Usage & capacity…", systemImage: "gauge.with.dots.needle.33percent") }
             if let active = commandCenter.activeView {
@@ -356,10 +400,11 @@ struct HiveDashboardView: View {
                 }
             }
         } label: {
-            Label("Command", systemImage: "command")
+            Image(systemName: "command")
+                .font(.system(size: 12, weight: .semibold))
         }
-        .buttonStyle(ToolbarPillButtonStyle(isActive: commandCenter.activeViewID != nil))
-        .help("Command center — views, delegation, activity and usage")
+        .buttonStyle(ToolbarPillButtonStyle(isActive: commandCenter.activeViewID != nil, color: .hiveAmber))
+        .help("Command center")
     }
 
     // MARK: - Active view
@@ -443,122 +488,135 @@ struct HiveDashboardView: View {
         VStack(spacing: 0) {
             List(selection: sidebarSelection) {
                 if showsEnvironmentsSection {
-                    Section(isExpanded: $environmentsExpanded) {
-                        if filteredEnvironments.isEmpty {
-                            SidebarEmptyState(
-                                text: searchText.isEmpty ? "No environments yet" : "No matching environments",
-                                actionTitle: searchText.isEmpty ? "Add environment" : nil,
-                                action: { showingCreateEnvironment = true }
+                    Section {
+                        // "This computer" (Local machine) first
+                        machineHeader(name: "This computer", symbol: "desktopcomputer", isLocal: true)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                        
+                        ForEach(localEnvironments) { environment in
+                            EnvironmentSidebarRow(environment: environment, ports: viewModel.listeningPorts[environment.id] ?? [])
+                                .tag(SidebarItem.environment(environment.id))
+                                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                                .contextMenu { environmentMenu(environment) }
+                        }
+                        
+                        // Other machines
+                        ForEach(filteredMachines) { machine in
+                            machineHeader(
+                                name: machine.name,
+                                symbol: "server.rack",
+                                status: viewModel.machineStatuses[machine.name],
+                                isRefreshing: viewModel.refreshingMachines.contains(machine.name)
                             )
-                        } else if groupsWorktrees {
-                            ForEach(nonWorktreeEnvironments) { environment in environmentSidebarRow(environment) }
-                            ForEach(worktreeRepositories, id: \.self) { repo in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Label(URL(fileURLWithPath: repo).lastPathComponent, systemImage: "arrow.triangle.branch")
-                                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                                        .padding(.leading, 8).selectionDisabled()
-                                    ForEach(worktreeEnvironments(in: repo)) { environment in
-                                        environmentSidebarRow(environment).padding(.leading, 14)
-                                    }
-                                }
+                            .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                            
+                            ForEach(environments(for: machine)) { environment in
+                                EnvironmentSidebarRow(environment: environment, ports: viewModel.listeningPorts[environment.id] ?? [])
+                                    .tag(SidebarItem.environment(environment.id))
+                                    .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                                    .contextMenu { environmentMenu(environment) }
                             }
-                        } else {
-                            ForEach(filteredEnvironments) { environment in environmentSidebarRow(environment) }
                         }
                     } header: {
-                        SidebarSectionHeader(title: "Environments", symbol: "folder", count: filteredEnvironments.count)
+                        SidebarSectionHeader(title: "Spaces", symbol: "folder", actionIcon: "plus", action: { showingCreateEnvironment = true })
                     }
                 }
 
                 if showsAgentsSection {
-                Section(isExpanded: $agentsExpanded) {
-                    if filteredAgents.isEmpty {
-                        SidebarEmptyState(
-                            text: searchText.isEmpty ? "No agents running" : "No matching agents",
-                            actionTitle: searchText.isEmpty ? "Start agent" : nil,
-                            action: { startAgent(in: nil) }
-                        )
-                    } else {
-                        ForEach(filteredAgents) { agent in
-                            AgentSidebarRow(agent: agent) { image in
-                                Task { await viewModel.pasteImage(image, toAgent: agent.id) }
-                            }
-                                .tag(SidebarItem.agent(agent.id))
-                                .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
-                                .contextMenu { agentMenu(agent) }
-                        }
-                    }
-                } header: {
-                    SidebarSectionHeader(title: "Agents", symbol: "sparkles", count: filteredAgents.count, showsDivider: true)
-                }
-                }
-
-                if showsMachinesSection {
-                Section(isExpanded: $machinesExpanded) {
-                    ForEach(filteredMachines) { machine in
-                        VStack(alignment: .leading, spacing: 1) {
-                            MachineSidebarRow(machine: machine, status: viewModel.machineStatuses[machine.name], isRefreshing: viewModel.refreshingMachines.contains(machine.name))
-                            ForEach(viewModel.machineAgents[machine.name] ?? []) { agent in
-                                HStack(spacing: 7) {
-                                    StatusDot(color: agentStateColor(agent.state))
-                                    if agent.state != "exited" { AgentProviderIcon(kind: agent.kind, size: 10) }
-                                    Text(agent.name.isEmpty ? agent.kind : agent.name).lineLimit(1)
-                                    Spacer(minLength: 2)
-                                    Text(agentStateTitle(agent.state)).font(.system(size: 10)).foregroundStyle(.secondary)
+                    Section {
+                        ForEach(environmentsWithAgents, id: \.id) { environment in
+                            Text(environment.name.isEmpty ? environment.id : environment.name)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.tertiary)
+                                .padding(.top, 12)
+                                .padding(.bottom, 4)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                            
+                            ForEach(agents(in: environment)) { agent in
+                                AgentSidebarRow(agent: agent) { image in
+                                    Task { await viewModel.pasteImage(image, toAgent: agent.id) }
                                 }
-                                .font(.system(size: 11))
-                                .padding(.leading, 15)
-                                .padding(.vertical, 1)
-                                .selectionDisabled()
+                                .tag(SidebarItem.agent(agent.id))
+                                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                                .contextMenu { agentMenu(agent) }
                             }
                         }
-                        .tag(SidebarItem.machine(machine.name))
-                        .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
-                        .contentShape(Rectangle())
-                        .onTapGesture { viewModel.inspectMachine(machine) }
-                        .contextMenu {
-                            Button("Inspect") { viewModel.inspectMachine(machine) }
-                            Button("Reconnect") { Task { await viewModel.reconnectMachine(machine) } }
-                                .disabled(machine.disabled == true)
-                            Button(machine.disabled == true ? "Enable" : "Disable") {
-                                Task { await viewModel.setMachine(machine, enabled: machine.disabled == true) }
-                            }
-                            Divider()
-                            Button("Rename…") { machineRenameText = machine.name; machineToRename = machine }
-                            if machine.identityID?.isEmpty == false {
-                                Button("Revoke Identity…", role: .destructive) { machineToRevoke = machine }
-                            }
-                            Button("Remove…", role: .destructive) { machineToRemove = machine }
-                        }
+                    } header: {
+                        SidebarSectionHeader(title: "Agents", symbol: "square.stack.3d.up", showsDivider: true)
                     }
-                    if viewModel.machines.isEmpty {
-                        SidebarEmptyState(text: "No saved machines", actionTitle: "Add machine", action: { showingAddMachine = true })
-                    }
-                } header: {
-                    SidebarSectionHeader(title: "Machines", symbol: "server.rack", count: filteredMachines.count, showsDivider: true)
-                }
                 }
             }
             .listStyle(.sidebar)
             .environment(\.defaultMinListRowHeight, sidebarRowHeight)
-            .dropDestination(for: URL.self) { urls, _ in
-                let folders = urls.filter { url in
-                    var isDirectory: ObjCBool = false
-                    return url.isFileURL && FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
-                }
-                guard !folders.isEmpty else { return false }
-                Task {
-                    for folder in folders {
-                        await viewModel.createEnvironment(name: folder.lastPathComponent, path: folder.path)
-                    }
-                }
-                return true
-            }
-            .help("Drop a folder here to add it as an environment")
-
+            
             sidebarFooter
         }
         .searchable(text: $searchText, placement: .sidebar, prompt: "Search")
+    }
+
+    @ViewBuilder
+    private func machineHeader(name: String, symbol: String, status: HiveMachineStatus? = nil, isRefreshing: Bool = false, isLocal: Bool = false) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+            
+            Text(name)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(.secondary)
+            
+            Spacer()
+            
+            if isLocal {
+                Button(action: { showingCreateEnvironment = true }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .frame(width: 20)
+            }
+            
+            if isRefreshing {
+                StatusIndicator(state: .processing)
+            } else if !isLocal {
+                StatusIndicator(state: (status?.reachable == true) ? .ready : .idle)
+            } else {
+                StatusIndicator(state: .ready)
+            }
+            
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.tertiary)
+                .frame(width: 14)
+        }
+        .padding(.vertical, 8)
+    }
+
+    private var localEnvironments: [HiveEnvironment] {
+        filteredEnvironments.filter { env in
+            !viewModel.machines.contains(where: { machine in
+                (viewModel.machineEnvironments[machine.name] ?? []).contains(where: { $0.id == env.id })
+            })
+        }
+    }
+
+    private func environments(for machine: SavedHiveMachine) -> [HiveEnvironment] {
+        (viewModel.machineEnvironments[machine.name] ?? []).filter { env in
+            searchText.isEmpty || env.name.localizedCaseInsensitiveContains(searchText) || env.id.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    private var environmentsWithAgents: [HiveEnvironment] {
+        let allAgents = filteredAgents + viewModel.machineAgents.values.flatMap { $0 }
+        let envIDs = Set(allAgents.map { $0.environmentID })
+        return viewModel.environments.filter { envIDs.contains($0.id) }
+    }
+
+    private func agents(in environment: HiveEnvironment) -> [HiveAgent] {
+        let allAgents = filteredAgents + viewModel.machineAgents.values.flatMap { $0 }
+        return allAgents.filter { $0.environmentID == environment.id }
     }
 
     @ViewBuilder
@@ -655,7 +713,7 @@ struct HiveDashboardView: View {
             }
 
             HStack(spacing: 6) {
-                StatusDot(color: isConnected ? .hiveAmber : .red, isGlowing: isConnected)
+                StatusIndicator(state: isConnected ? .ready : .idle)
                 Text(isConnected ? "Connected" : "Runtime unavailable")
                     .foregroundStyle(.secondary)
                 if isConnected && activeAgentCount > 0 {
@@ -903,27 +961,40 @@ private struct QuickOpenOverlay: ViewModifier {
 private struct SidebarSectionHeader: View {
     let title: String
     let symbol: String
-    let count: Int
     var showsDivider = false
+    var actionIcon: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             if showsDivider {
                 Divider()
-                    .padding(.top, 3)
+                    .padding(.vertical, 8)
+                    .opacity(0.5)
             }
-            HStack(spacing: 6) {
-                Image(systemName: symbol)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.hiveAmber)
-                    .frame(width: 14)
+            HStack {
                 Text(title)
-                if count > 0 {
-                    Text("\(count)")
-                        .monospacedDigit()
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .kerning(0.5)
+                
+                Spacer()
+                
+                if let actionIcon, let action {
+                    Button(action: action) {
+                        Image(systemName: actionIcon)
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tertiary)
+                } else {
+                    Image(systemName: symbol)
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.tertiary)
                 }
             }
+            .padding(.top, 4)
+            .padding(.bottom, 6)
         }
     }
 }
@@ -955,27 +1026,45 @@ private struct EnvironmentSidebarRow: View {
     let environment: HiveEnvironment
     let ports: [ListeningPort]
 
-    private var detail: String? {
-        let parts = [environment.git?.branch].compactMap { $0 }.filter { !$0.isEmpty }
-            + ports.map { ":\($0.port)" }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    private var branch: String? {
+        environment.git?.branch
+    }
+
+    private var status: StatusIndicator.IndicatorState {
+        if (environment.git?.conflicts ?? 0) > 0 { return .needsAttention }
+        if environment.status == "working" { return .processing }
+        return environment.status == "ready" ? .ready : .idle
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            StatusDot(color: environment.status == "ready" ? .hiveAmber : .secondary)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(environment.name.isEmpty ? environment.id : environment.name)
-                    .lineLimit(1)
-                if let detail {
-                    Text(detail)
+        HStack(alignment: .center, spacing: 8) {
+            EnvironmentAvatar(name: environment.name.isEmpty ? environment.id : environment.name)
+                .frame(width: 20)
+
+            Text(environment.name.isEmpty ? environment.id : environment.name)
+                .font(.system(size: 13, weight: .regular))
+                .lineLimit(1)
+
+            Spacer(minLength: 4)
+
+            HStack(alignment: .center, spacing: 6) {
+                if let branch {
+                    Text(branch)
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .foregroundStyle(.tertiary)
+                    Circle()
+                        .fill(Color.hiveAmber.opacity(0.8))
+                        .frame(width: 4, height: 4)
+                }
+                
+                if (environment.git?.conflicts ?? 0) > 0 {
+                    NeedsYouBadge()
+                } else {
+                    StatusIndicator(state: status)
                 }
             }
         }
-        .padding(.vertical, 1)
+        .padding(.vertical, 3)
         .help(environment.path)
     }
 }
@@ -985,28 +1074,47 @@ private struct AgentSidebarRow: View {
     let onDropImage: (Data) -> Void
     @State private var isDropTargeted = false
 
+    private var status: StatusIndicator.IndicatorState {
+        switch agent.state {
+        case "working": return .processing
+        case "blocked": return .needsAttention
+        case "done", "idle": return .ready
+        default: return .idle
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 6) {
-            StatusDot(color: agentStateColor(agent.state), isGlowing: agent.state == "working")
-            if agent.state != "exited" { AgentProviderIcon(kind: agent.kind, size: 10) }
-            VStack(alignment: .leading, spacing: 0) {
-                Text(agent.name.isEmpty ? agent.kind : agent.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
-                Text(agent.environmentID)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 4)
-            Text(agentStateTitle(agent.state))
-                .font(.system(size: 10.5))
-                .foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: 8) {
+            AgentProviderIcon(kind: agent.kind, size: 14)
+                .frame(width: 20)
+            
+            Text(agent.name.isEmpty ? agent.kind : agent.name)
+                .font(.system(size: 13, weight: .regular))
                 .lineLimit(1)
+            
+            Spacer(minLength: 4)
+            
+            HStack(alignment: .center, spacing: 8) {
+                if agent.state == "blocked" {
+                    NeedsYouBadge()
+                } else {
+                    let time = formatAgentTime(agent.since)
+                    if time.isEmpty || agent.state == "exited" || agent.state == "unknown" {
+                        Text(agentStateTitle(agent.state))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        Text(time)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    StatusIndicator(state: status)
+                }
+            }
         }
         .padding(.horizontal, isDropTargeted ? 5 : 0)
         .background(isDropTargeted ? Color.hiveAmber.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 7))
-        .frame(height: 40)
+        .frame(height: 32)
         .help(agent.reason ?? "\(agent.kind) · \(agent.state)")
         .onDrop(of: [UTType.image.identifier], isTargeted: $isDropTargeted) { providers in
             guard agent.paneID != nil, let provider = providers.first else { return false }
@@ -1027,18 +1135,45 @@ private struct MachineSidebarRow: View {
     let status: HiveMachineStatus?
     let isRefreshing: Bool
 
+    private var statusState: StatusIndicator.IndicatorState {
+        if machine.disabled == true { return .idle }
+        guard let status else { return .idle }
+        return status.reachable ? .ready : .idle
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            StatusDot(color: machine.disabled == true ? .secondary : (status?.reachable == true ? .green : (status == nil ? .secondary : .red)))
+        HStack(spacing: 10) {
+            Image(systemName: "server.rack")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .frame(width: 20, height: 20)
+            
             VStack(alignment: .leading, spacing: 1) {
-                Text(machine.name).lineLimit(1)
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Text(machine.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            
             Spacer(minLength: 4)
-            if isRefreshing { ProgressView().controlSize(.small) }
-            else if let count = status?.agents, count > 0 { Text("\(count)").font(.system(size: 11)).foregroundStyle(.secondary) }
+            
+            if isRefreshing {
+                StatusIndicator(state: .processing)
+            } else {
+                HStack(spacing: 6) {
+                    if let count = status?.agents, count > 0 {
+                        Text("\(count)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    StatusIndicator(state: statusState)
+                }
+            }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
         .help(machine.host)
     }
 
@@ -1046,19 +1181,6 @@ private struct MachineSidebarRow: View {
         if machine.disabled == true { return "Disabled" }
         guard let status else { return "Not checked" }
         return status.reachable ? (status.state.map { "Connected · \($0)" } ?? "Connected") : "Unavailable"
-    }
-}
-
-private struct StatusDot: View {
-    let color: Color
-    var isGlowing = false
-
-    var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: 7, height: 7)
-            .shadow(color: isGlowing ? color.opacity(0.7) : .clear, radius: 3)
-            .frame(width: 16)
     }
 }
 

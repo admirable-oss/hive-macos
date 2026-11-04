@@ -32,15 +32,24 @@ struct WorkspaceTabBar: View {
                         }
                     }
                 }
-                .padding(.horizontal, 2)
+                .padding(.horizontal, 6)
             }
             .onChange(of: activeID) { _, id in
                 guard let id else { return }
                 withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id) }
             }
         }
-        .frame(minWidth: 120, idealWidth: 560, maxWidth: .infinity)
+        .frame(minWidth: 80, idealWidth: 240, maxWidth: .infinity)
         .frame(height: 32)
+        .background {
+            Capsule()
+                .fill(.ultraThinMaterial)
+                .opacity(0.4)
+        }
+        .overlay {
+            Capsule()
+                .strokeBorder(Color.primary.opacity(0.05), lineWidth: 0.5)
+        }
     }
 }
 
@@ -54,17 +63,15 @@ private struct WorkspaceTabButton: View {
 
     @State private var isHovering = false
 
-    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 8, style: .continuous) }
-
     var body: some View {
         HStack(spacing: 8) {
             Button(action: select) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Text(">_")
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundStyle(isActive ? Color.hiveAmber : Color.secondary)
                     Text("\(number)")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 12, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(isActive ? Color.primary : Color.secondary)
                 }
@@ -72,62 +79,87 @@ private struct WorkspaceTabButton: View {
             }
             .buttonStyle(.plain)
             .help(title)
-            .accessibilityLabel("Tab \(number), \(title)")
-            .accessibilityAddTraits(isActive ? .isSelected : [])
 
             if canClose {
                 Button(action: close) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(.secondary)
                         .frame(width: 14, height: 14)
-                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .opacity(isActive || isHovering ? 1 : 0)
-                .help("Close tab")
-                .accessibilityLabel("Close tab \(number)")
+                .opacity(isActive || isHovering ? 0.6 : 0)
             }
         }
-        .padding(.horizontal, 11)
-        .frame(height: 28)
+        .padding(.horizontal, 10)
+        .frame(height: 24)
         .background {
-            shape.fill(Color.primary.opacity(isActive ? 0.07 : (isHovering ? 0.04 : 0)))
+            ZStack {
+                if isActive {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .shadow(color: .black.opacity(0.1), radius: 2, y: 1)
+                } else if isHovering {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(0.05))
+                }
+            }
         }
         .overlay {
-            shape.strokeBorder(Color.primary.opacity(isActive ? 0.12 : 0), lineWidth: 1)
+            if isActive {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
+            }
         }
         .onHover { isHovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovering)
+        .animation(.spring(duration: 0.2), value: isActive)
+        .animation(.spring(duration: 0.2), value: isHovering)
     }
 }
 
-/// Flat toolbar control: secondary until hovered, filled while active.
+/// Glassmorphic toolbar control: ultra-thin material while active, subtle hover.
 struct ToolbarPillButtonStyle: ButtonStyle {
     var isActive = false
+    var color: Color = .primary
 
     func makeBody(configuration: Configuration) -> some View {
-        ToolbarPill(configuration: configuration, isActive: isActive)
+        ToolbarPill(configuration: configuration, isActive: isActive, color: color)
     }
 
     private struct ToolbarPill: View {
         let configuration: ButtonStyleConfiguration
         let isActive: Bool
+        let color: Color
         @State private var isHovering = false
 
         var body: some View {
             configuration.label
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(isActive || isHovering ? Color.primary : Color.secondary)
-                .padding(.horizontal, 10)
-                .frame(minWidth: 28, minHeight: 28)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isActive ? color : (isHovering ? color : color.opacity(0.7)))
+                .padding(.horizontal, 8)
+                .frame(minHeight: 24)
                 .background {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.primary.opacity(isActive ? 0.09 : (configuration.isPressed ? 0.07 : (isHovering ? 0.04 : 0))))
+                    ZStack {
+                        if isActive {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                                .shadow(color: .black.opacity(0.05), radius: 1, y: 0.5)
+                        } else if isHovering {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color.primary.opacity(0.05))
+                        }
+                    }
                 }
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    if isActive {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .onHover { isHovering = $0 }
-                .animation(.easeOut(duration: 0.12), value: isHovering)
+                .animation(.spring(duration: 0.2), value: isActive)
+                .animation(.spring(duration: 0.2), value: isHovering)
         }
     }
 }

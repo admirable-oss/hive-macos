@@ -32,7 +32,7 @@ func agentStateTitle(_ state: String) -> String {
 
 struct AgentProviderIcon: View {
     let kind: String
-    var size: CGFloat = 11
+    var size: CGFloat = 12
 
     private var provider: String {
         kind.lowercased().filter { $0.isLetter || $0.isNumber }
@@ -58,11 +58,116 @@ struct AgentProviderIcon: View {
     }
 
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: size, weight: .semibold))
-            .foregroundStyle(tint)
-            .frame(width: 14, height: 14)
-            .accessibilityLabel(kind)
-            .help(kind.capitalized)
+        ZStack {
+            Image(systemName: symbol)
+                .font(.system(size: size, weight: .medium))
+                .foregroundStyle(tint)
+        }
+        .frame(width: 20, height: 20)
+        .accessibilityLabel(kind)
+        .help(kind.capitalized)
     }
+}
+
+// MARK: - M7 Sidebar Enhancements
+
+struct EnvironmentAvatar: View {
+    let name: String
+    var size: CGFloat = 20
+
+    private var initial: String {
+        String(name.prefix(1)).uppercased()
+    }
+
+    private var backgroundColor: Color {
+        let colors: [Color] = [
+            .blue, .purple, .orange, .pink, .indigo, .mint, .teal, .cyan
+        ]
+        let index = abs(name.hashValue) % colors.count
+        return colors[index]
+    }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(backgroundColor.gradient)
+            Text(initial)
+                .font(.system(size: size * 0.6, weight: .bold))
+                .foregroundColor(.white)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+struct StatusIndicator: View {
+    enum IndicatorState {
+        case ready
+        case processing
+        case idle
+        case needsAttention
+    }
+
+    let state: IndicatorState
+
+    @State private var rotation: Double = 0
+
+    var body: some View {
+        Group {
+            switch state {
+            case .ready:
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 7, height: 7)
+            case .processing:
+                Circle()
+                    .stroke(Color.blue.opacity(0.3), lineWidth: 1.5)
+                    .overlay(
+                        Circle()
+                            .trim(from: 0, to: 0.3)
+                            .stroke(Color.blue, lineWidth: 1.5)
+                            .rotationEffect(.degrees(rotation))
+                    )
+                    .frame(width: 9, height: 9)
+                    .onAppear {
+                        withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) {
+                            rotation = 360
+                        }
+                    }
+            case .idle:
+                Circle()
+                    .stroke(Color.secondary.opacity(0.6), lineWidth: 1.2)
+                    .frame(width: 7, height: 7)
+            case .needsAttention:
+                Circle()
+                    .fill(Color.orange)
+                    .frame(width: 7, height: 7)
+            }
+        }
+        .frame(width: 20, height: 20)
+    }
+}
+
+struct NeedsYouBadge: View {
+    var body: some View {
+        Text("Needs you")
+            .font(.system(size: 10, weight: .semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.orange.opacity(0.15))
+            .foregroundStyle(Color.orange)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .stroke(Color.orange.opacity(0.2), lineWidth: 0.5)
+            )
+    }
+}
+
+func formatAgentTime(_ since: String?) -> String {
+    guard let since, let date = ISO8601DateFormatter().date(from: since) else { return "" }
+    let diff = Date().timeIntervalSince(date)
+    if diff < 60 { return "<1m" }
+    if diff < 3600 { return "\(Int(diff / 60))m" }
+    if diff < 86400 { return "\(Int(diff / 3600))h" }
+    return "\(Int(diff / 86400))d"
 }
