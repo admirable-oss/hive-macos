@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Combine
 import Darwin
 import SwiftTerm
@@ -102,6 +103,28 @@ class TerminalSession: NSObject, ObservableObject {
     }
 }
 
+/// Opens what a ⌘-click landed on. SwiftTerm has already checked the target and
+/// resolved it to a URL; Hive only decides how to present it, so directories open
+/// in Finder next to their contents and everything else opens with its default app.
+@MainActor
+enum TerminalLinkRouter {
+    static func open(_ link: String) {
+        guard let url = URL(string: link) else { return }
+        if url.isFileURL, (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+/// A local process terminal that opens ⌘-clicked links and paths Hive's way.
+final class HiveShellTerminalView: LocalProcessTerminalView {
+    override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        TerminalLinkRouter.open(link)
+    }
+}
+
 /// A local login shell: the desktop's scratch tabs, for work outside any environment.
 final class ShellTerminalSession: TerminalSession, LocalProcessTerminalViewDelegate {
     let launch: TerminalLaunch
@@ -110,7 +133,7 @@ final class ShellTerminalSession: TerminalSession, LocalProcessTerminalViewDeleg
 
     init(launch: TerminalLaunch) {
         self.launch = launch
-        processView = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        processView = HiveShellTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
         super.init(terminalView: processView, directory: launch.directory)
         processView.processDelegate = self
         start()
@@ -310,6 +333,10 @@ final class PaneTerminalSession: TerminalSession, TerminalViewDelegate {
     func scrolled(source: TerminalView, position: Double) {}
 
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        TerminalLinkRouter.open(link)
+    }
 }
 
 /// Every terminal the window shows, kept alive while its tab or pane is open.
@@ -367,8 +394,20 @@ struct TerminalSurface: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
+    @State private var showingFind = false
+    @State private var findQuery = ""
+    @State private var findCaseSensitive = false
+    @State private var findIndex = 0
+    @State private var findTotal = 0
+
     var body: some View {
-        TerminalHostView(session: session, colorScheme: colorScheme, isFocused: isFocused, onFocus: onFocus)
+        TerminalHostView(
+            session: session,
+            colorScheme: colorScheme,
+            autoFocusTerminal: isFocused && !showingFind,
+            onFocus: onFocus,
+            onFind: openFind
+        )
             .padding(.leading, 10)
             .padding(.top, 6)
             .background(TerminalPalette(colorScheme).background)
@@ -403,6 +442,22 @@ struct TerminalSurface: View {
                         .allowsHitTesting(false)
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if showingFind {
+                    TerminalFindBar(
+                        query: $findQuery,
+                        isCaseSensitive: $findCaseSensitive,
+                        index: findIndex,
+                        total: findTotal,
+                        onNext: { search(forward: true) },
+                        onPrevious: { search(forward: false) },
+                        onClose: closeFind
+                    )
+                    .padding(.top, 8)
+                    .padding(.trailing, 14)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
             .overlay(alignment: .bottom) {
                 if !session.isRunning {
                     exitBanner
@@ -412,6 +467,45 @@ struct TerminalSurface: View {
             }
             .animation(.easeOut(duration: 0.2), value: session.isRunning)
             .animation(.easeOut(duration: 0.12), value: isFocused)
+            .animation(.easeOut(duration: 0.15), value: showingFind)
+            .onChange(of: findQuery) { _, _ in restartSearch() }
+            .onChange(of: findCaseSensitive) { _, _ in restartSearch() }
+    }
+
+    private func openFind() {
+        showingFind = true
+    }
+
+    private func closeFind() {
+        showingFind = false
+        findQuery = ""
+        findIndex = 0
+        findTotal = 0
+        session.terminalView.clearSearch()
+    }
+
+    private func restartSearch() {
+        session.terminalView.clearSearch()
+        search(forward: true)
+    }
+
+    private func search(forward: Bool) {
+        let term = findQuery
+        guard !term.isEmpty else {
+            session.terminalView.clearSearch()
+            findIndex = 0
+            findTotal = 0
+            return
+        }
+        let options = SearchOptions(caseSensitive: findCaseSensitive)
+        if forward {
+            session.terminalView.findNext(term, options: options)
+        } else {
+            session.terminalView.findPrevious(term, options: options)
+        }
+        let summary = session.terminalView.searchMatchSummary(term, options: options)
+        findIndex = summary.index
+        findTotal = summary.total
     }
 
     private static func shellQuoted(_ path: String) -> String {
@@ -440,13 +534,17 @@ struct TerminalSurface: View {
 private struct TerminalHostView: NSViewRepresentable {
     let session: TerminalSession
     let colorScheme: ColorScheme
-    let isFocused: Bool
+    /// False while the find bar owns the keyboard, so focus isn't pulled back to the shell.
+    let autoFocusTerminal: Bool
     let onFocus: () -> Void
+    let onFind: () -> Void
 
     final class Coordinator {
         var appliedScheme: ColorScheme?
         var clickMonitor: Any?
+        var keyMonitor: Any?
         var onFocus: () -> Void = {}
+        var onFind: () -> Void = {}
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -462,11 +560,23 @@ private struct TerminalHostView: NSViewRepresentable {
             }
             return event
         }
+        // ⌘F opens the find bar for whichever terminal holds the keyboard.
+        coordinator.keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak container] event in
+            guard let container, event.window === container.window,
+                  event.modifierFlags.contains(.command),
+                  !event.modifierFlags.contains(.shift),
+                  event.charactersIgnoringModifiers?.lowercased() == "f",
+                  let responder = container.window?.firstResponder as? NSView,
+                  responder.isDescendant(of: container) else { return event }
+            coordinator.onFind()
+            return nil
+        }
         return container
     }
 
     func updateNSView(_ container: NSView, context: Context) {
         context.coordinator.onFocus = onFocus
+        context.coordinator.onFind = onFind
         let terminal = session.terminalView
         if terminal.superview !== container {
             terminal.removeFromSuperview()
@@ -474,7 +584,7 @@ private struct TerminalHostView: NSViewRepresentable {
             terminal.autoresizingMask = [.width, .height]
             container.addSubview(terminal)
         }
-        if isFocused, container.window?.firstResponder !== terminal {
+        if autoFocusTerminal, container.window?.firstResponder !== terminal {
             DispatchQueue.main.async { terminal.window?.makeFirstResponder(terminal) }
         }
         if context.coordinator.appliedScheme != colorScheme {
@@ -485,6 +595,7 @@ private struct TerminalHostView: NSViewRepresentable {
 
     static func dismantleNSView(_ container: NSView, coordinator: Coordinator) {
         if let monitor = coordinator.clickMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = coordinator.keyMonitor { NSEvent.removeMonitor(monitor) }
     }
 }
 
@@ -510,5 +621,114 @@ private struct TerminalPalette {
         terminal.nativeForegroundColor = foreground
         terminal.caretColor = amber
         terminal.selectedTextBackgroundColor = amber.withAlphaComponent(0.3)
+    }
+}
+
+// MARK: - Find
+
+/// The ⌘F find bar: a query field, the position among matches, and step controls.
+private struct TerminalFindBar: View {
+    @Binding var query: String
+    @Binding var isCaseSensitive: Bool
+    let index: Int
+    let total: Int
+    let onNext: () -> Void
+    let onPrevious: () -> Void
+    let onClose: () -> Void
+
+    @FocusState private var isFocused: Bool
+
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 9, style: .continuous) }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            TextField("Find in scrollback", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .frame(width: 190)
+                .focused($isFocused)
+                .onSubmit(onNext)
+
+            Text(status)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 46, alignment: .trailing)
+
+            Button(action: { isCaseSensitive.toggle() }) {
+                Image(systemName: "textformat")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(isCaseSensitive ? SwiftUI.Color.hiveAmber : .secondary)
+            .help("Match case")
+
+            Divider().frame(height: 14)
+
+            Button(action: onPrevious) { Image(systemName: "chevron.up") }
+                .buttonStyle(.borderless)
+                .disabled(query.isEmpty)
+                .help("Previous match")
+            Button(action: onNext) { Image(systemName: "chevron.down") }
+                .buttonStyle(.borderless)
+                .disabled(query.isEmpty)
+                .help("Next match")
+            Button(action: onClose) { Image(systemName: "xmark") }
+                .buttonStyle(.borderless)
+                .help("Close")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.regularMaterial, in: shape)
+        .overlay(shape.strokeBorder(SwiftUI.Color.primary.opacity(0.12)))
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        .onExitCommand(perform: onClose)
+        .onAppear { isFocused = true }
+    }
+
+    private var status: String {
+        guard !query.isEmpty else { return "" }
+        return total == 0 ? "No results" : "\(index)/\(total)"
+    }
+}
+
+// MARK: - Secure keyboard entry
+
+/// macOS secure keyboard entry, which keeps event taps in other processes from
+/// observing keystrokes while it is on. macOS counts enable requests, so keep a
+/// single owner that balances them.
+@MainActor
+final class SecureKeyboardEntry: ObservableObject {
+    static let shared = SecureKeyboardEntry()
+
+    @Published private(set) var isEnabled = false
+
+    func setEnabled(_ enabled: Bool) {
+        guard enabled != isEnabled else { return }
+        if enabled {
+            EnableSecureEventInput()
+        } else {
+            DisableSecureEventInput()
+        }
+        isEnabled = enabled
+    }
+
+    func toggle() { setEnabled(!isEnabled) }
+}
+
+/// The Terminal menu item that turns secure keyboard entry on and off.
+struct SecureKeyboardEntryCommand: View {
+    @ObservedObject private var secureEntry = SecureKeyboardEntry.shared
+
+    var body: some View {
+        Toggle("Secure Keyboard Entry", isOn: Binding(
+            get: { secureEntry.isEnabled },
+            set: { secureEntry.setEnabled($0) }
+        ))
+        .keyboardShortcut("s", modifiers: [.command, .shift])
+        .help("Keep other processes from observing keystrokes")
     }
 }

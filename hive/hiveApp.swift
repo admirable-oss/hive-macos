@@ -18,6 +18,11 @@ struct HiveApp: App {
         }
         .defaultSize(width: 1100, height: 720)
         .windowToolbarStyle(.unified(showsTitle: false))
+        .commands {
+            CommandMenu("Terminal") {
+                SecureKeyboardEntryCommand()
+            }
+        }
 
         Settings {
             AppSettingsView()

@@ -34,6 +34,7 @@ struct HiveDashboardView: View {
     @State private var showingObservers = false
     @State private var showingTaskCenter = false
     @State private var showingLayoutManager = false
+    @State private var reviewEnvironment: HiveEnvironment?
     @State private var requestedChangePath: String?
 
     init(hiveURL: URL, sessionName: String = "default") {
@@ -117,6 +118,9 @@ struct HiveDashboardView: View {
         }
         .sheet(isPresented: $showingLayoutManager) {
             LayoutManagerView(workspace: viewModel.workspace)
+        }
+        .sheet(item: $reviewEnvironment) { environment in
+            ReviewCockpitView(environment: environment, viewModel: viewModel)
         }
         .sheet(isPresented: $showingNearbyMachines) {
             NearbyMachinesSheet(viewModel: viewModel)
@@ -255,6 +259,10 @@ struct HiveDashboardView: View {
                 inspectorToggle(.files)
                 inspectorToggle(.changes)
                 inspectorToggle(.agent)
+                Button { reviewEnvironment = viewModel.activeEnvironment } label: { Label("Review", systemImage: "checkmark.seal") }
+                    .buttonStyle(ToolbarPillButtonStyle())
+                    .disabled(viewModel.activeEnvironment == nil)
+                    .help("Review changes, tasks and agent output for the active environment")
                 Button { showingTaskCenter = true } label: { Label("Tasks", systemImage: "checklist") }
                     .buttonStyle(ToolbarPillButtonStyle())
                     .help("Tasks and plans")

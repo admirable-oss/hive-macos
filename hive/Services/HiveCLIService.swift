@@ -4,7 +4,9 @@ struct HiveCLIService {
     let executableURL: URL
     var sessionName: String?
 
-    func run(_ arguments: [String]) async throws -> String {
+    /// Runs the executable and returns its standard output. `input`, when given,
+    /// is written to the process's standard input and then closed.
+    func run(_ arguments: [String], input: String? = nil) async throws -> String {
         let commandArguments = (sessionName.map { ["--session", $0] } ?? []) + arguments
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -15,9 +17,15 @@ struct HiveCLIService {
                 process.arguments = commandArguments
                 process.standardOutput = output
                 process.standardError = errors
+                let inputPipe = input == nil ? nil : Pipe()
+                if let inputPipe { process.standardInput = inputPipe }
 
                 do {
                     try process.run()
+                    if let inputPipe, let input {
+                        inputPipe.fileHandleForWriting.write(Data(input.utf8))
+                        try? inputPipe.fileHandleForWriting.close()
+                    }
                     let stdout = output.fileHandleForReading.readDataToEndOfFile()
                     let stderr = errors.fileHandleForReading.readDataToEndOfFile()
                     process.waitUntilExit()

@@ -328,94 +328,6 @@ private struct QuickLookPreview: NSViewRepresentable {
 
 // MARK: - Changes
 
-private struct GitChange: Identifiable, Hashable {
-    enum Area { case staged, unstaged }
-
-    let path: String
-    let code: Character
-    let area: Area
-
-    var id: String { "\(area)-\(path)" }
-    var fileName: String { (path as NSString).lastPathComponent }
-    var directory: String { (path as NSString).deletingLastPathComponent }
-
-    var label: String {
-        switch code {
-        case "?": "U"
-        default: String(code)
-        }
-    }
-
-    var color: Color {
-        switch code {
-        case "M": .hiveAmber
-        case "A", "?": .teal
-        case "D": .red
-        case "R", "C": .blue
-        case "U": .orange
-        default: .secondary
-        }
-    }
-
-    /// Parses `git status --porcelain=v1 -z` output. Paths are relative to the repository root.
-    static func parse(_ output: String) -> [GitChange] {
-        var changes: [GitChange] = []
-        var entries = output.split(separator: "\0", omittingEmptySubsequences: true).makeIterator()
-        while let entry = entries.next() {
-            guard entry.count > 3 else { continue }
-            let index = entry[entry.startIndex]
-            let worktree = entry[entry.index(after: entry.startIndex)]
-            let path = String(entry.dropFirst(3))
-            // Renames and copies are followed by their original path.
-            if index == "R" || index == "C" { _ = entries.next() }
-
-            if index == "?" {
-                changes.append(GitChange(path: path, code: "?", area: .unstaged))
-                continue
-            }
-            if index != " " { changes.append(GitChange(path: path, code: index, area: .staged)) }
-            if worktree != " " { changes.append(GitChange(path: path, code: worktree, area: .unstaged)) }
-        }
-        return changes
-    }
-}
-
-private struct DiffLine: Identifiable {
-    enum Kind { case added, removed, hunk, metadata, context }
-    let id: Int
-    let text: String
-    let kind: Kind
-
-    init(id: Int, text: String) {
-        self.id = id
-        self.text = text
-        if text.hasPrefix("+") && !text.hasPrefix("+++") { kind = .added }
-        else if text.hasPrefix("-") && !text.hasPrefix("---") { kind = .removed }
-        else if text.hasPrefix("@@") { kind = .hunk }
-        else if text.hasPrefix("diff ") || text.hasPrefix("index ") || text.hasPrefix("---") || text.hasPrefix("+++") { kind = .metadata }
-        else { kind = .context }
-    }
-
-    var foreground: Color {
-        switch kind {
-        case .added: Color(red: 0.48, green: 0.84, blue: 0.61)
-        case .removed: Color(red: 0.98, green: 0.51, blue: 0.49)
-        case .hunk: Color(red: 0.48, green: 0.69, blue: 0.98)
-        case .metadata: .secondary
-        case .context: .primary.opacity(0.84)
-        }
-    }
-
-    var background: Color {
-        switch kind {
-        case .added: Color.green.opacity(0.10)
-        case .removed: Color.red.opacity(0.10)
-        case .hunk: Color.blue.opacity(0.08)
-        case .metadata, .context: .clear
-        }
-    }
-}
-
 private struct ChangesView: View {
     let directory: String
     let changeToken: AnyHashable
@@ -429,22 +341,21 @@ private struct ChangesView: View {
     @State private var reloadToken = UUID()
     @State private var diffText = ""
     @State private var diffError: String?
+    @State private var isBusy = false
+    @State private var actionError: String?
+    @State private var showingCommit = false
 
-    private var diffLines: [DiffLine] {
-        diffText.components(separatedBy: "\n").enumerated().map { DiffLine(id: $0.offset, text: $0.element) }
-    }
-
-    private let git = HiveCLIService(executableURL: URL(fileURLWithPath: "/usr/bin/git"))
+    private var git: GitClient { GitClient(directory: directory) }
 
     private var isNotRepository: Bool { error?.contains("not a git repository") == true }
-
     private var staged: [GitChange] { (changes ?? []).filter { $0.area == .staged } }
-    private var unstaged: [GitChange] { (changes ?? []).filter { $0.area == .unstaged } }
+    private var selectedChange: GitChange? { changes?.first { selection.contains($0.id) } }
+    private var folderName: String { URL(fileURLWithPath: directory).lastPathComponent }
 
     var body: some View {
         InspectorCard(
             title: "Changes",
-            detail: branch ?? URL(fileURLWithPath: directory).lastPathComponent,
+            detail: branch ?? folderName,
             onReload: { reloadToken = UUID() }
         ) {
             if isNotRepository {
@@ -459,75 +370,86 @@ private struct ChangesView: View {
                 ContentUnavailableView("No Changes", systemImage: "checkmark.circle", description: Text("The working tree is clean."))
             } else {
                 VSplitView {
-                    List(selection: $selection) {
-                        if !staged.isEmpty {
-                            Section("Staged") {
-                                ForEach(staged) { ChangeRow(change: $0) }
-                            }
-                        }
-                        if !unstaged.isEmpty {
-                            Section("Changes") {
-                                ForEach(unstaged) { ChangeRow(change: $0) }
-                            }
-                        }
-                    }
-                    .listStyle(.sidebar)
-                    .scrollContentBackground(.hidden)
+                    ChangeListView(
+                        changes: changes ?? [],
+                        selection: $selection,
+                        isBusy: isBusy,
+                        onStage: stage,
+                        onUnstage: unstage,
+                        onOpen: { open($0) },
+                        onReveal: { reveal($0) }
+                    )
                     .frame(minHeight: 120)
-                    .contextMenu(forSelectionType: GitChange.ID.self) { ids in
-                        if !ids.isEmpty {
-                            Button("Open") { ids.forEach { NSWorkspace.shared.open(fileURL(for: $0)) } }
-                            Button("Reveal in Finder") {
-                                NSWorkspace.shared.activateFileViewerSelecting(ids.map(fileURL(for:)))
-                            }
-                        }
-                    } primaryAction: { ids in
-                        ids.forEach { NSWorkspace.shared.open(fileURL(for: $0)) }
-                    }
 
-                    Group {
-                        if let diffError {
-                            ContentUnavailableView("Can’t Read Diff", systemImage: "exclamationmark.triangle", description: Text(diffError))
-                        } else if diffText.isEmpty {
-                            ContentUnavailableView("Select a Changed File", systemImage: "doc.text.magnifyingglass", description: Text("Its Git diff appears here."))
-                        } else {
-                            ScrollView([.horizontal, .vertical]) {
-                                LazyVStack(alignment: .leading, spacing: 0) {
-                                    ForEach(diffLines) { line in
-                                        Text(line.text.isEmpty ? " " : line.text)
-                                            .font(.system(size: 10.5, design: .monospaced))
-                                            .foregroundStyle(line.foreground)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 1)
-                                            .background(line.background)
-                                            .textSelection(.enabled)
-                                    }
-                                }
-                                .frame(minWidth: 0, alignment: .leading)
-                                .padding(.vertical, 6)
-                            }
-                        }
-                    }
+                    DiffPaneView(
+                        diffText: diffText,
+                        error: diffError,
+                        area: selectedChange?.area,
+                        isBusy: isBusy,
+                        onApplyHunks: applyHunks
+                    )
                     .frame(minHeight: 160)
                 }
             }
+
+            Divider()
+            commitBar
         }
         .task(id: [changeToken, AnyHashable(reloadToken)]) { await load() }
         .task(id: selection.first) { await loadDiff() }
         .onChange(of: requestedPath) { _, path in selectRequestedPath(path) }
+        .sheet(isPresented: $showingCommit) {
+            if let repositoryRoot {
+                CommitSheet(
+                    environmentName: folderName,
+                    path: directory,
+                    branch: branch,
+                    root: repositoryRoot,
+                    client: git
+                ) {
+                    reloadToken = UUID()
+                }
+            }
+        }
+    }
+
+    private var commitBar: some View {
+        HStack(spacing: 8) {
+            if let actionError {
+                Label(actionError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            } else {
+                Text(staged.isEmpty ? "No staged changes" : "\(staged.count) staged")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button("Stage All") { stageAll() }
+                .buttonStyle(.borderless)
+                .disabled((changes ?? []).isEmpty || isBusy)
+                .help("Stage every change")
+            Button("Unstage All") { unstageAll() }
+                .buttonStyle(.borderless)
+                .disabled(staged.isEmpty || isBusy)
+                .help("Move every staged change back out of the index")
+            Button("Commit") { showingCommit = true }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(staged.isEmpty)
+                .help("Review and commit what is staged")
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 38)
     }
 
     private func load() async {
         do {
-            let root = try await git.run(["-C", directory, "rev-parse", "--show-toplevel"])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let output = try await git.run(["-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all"])
-            let currentBranch = try? await git.run(["-C", root, "branch", "--show-current"])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let root = try await git.root()
             repositoryRoot = root
-            branch = currentBranch?.isEmpty == false ? currentBranch : nil
-            changes = GitChange.parse(output)
+            branch = await git.branch(root: root)
+            changes = try await git.status(root: root)
             selection.formIntersection(Set(changes?.map(\.id) ?? []))
             selectRequestedPath(requestedPath)
             if selection.isEmpty, let first = changes?.first { selection = [first.id] }
@@ -557,15 +479,7 @@ private struct ChangesView: View {
         diffText = ""
         diffError = nil
         do {
-            let fileURL = URL(fileURLWithPath: root).appendingPathComponent(change.path)
-            let text: String
-            if change.code == "?" {
-                text = try untrackedDiff(path: change.path, fileURL: fileURL)
-            } else if change.area == .staged {
-                text = try await git.run(["-C", root, "diff", "--cached", "--no-ext-diff", "--", change.path])
-            } else {
-                text = try await git.run(["-C", root, "diff", "--no-ext-diff", "--", change.path])
-            }
+            let text = try await git.diff(root: root, change: change)
             guard !Task.isCancelled, selection.first == id else { return }
             diffText = text.isEmpty ? "No textual diff is available for this file." : text
             diffError = nil
@@ -575,44 +489,55 @@ private struct ChangesView: View {
         }
     }
 
-    private func untrackedDiff(path: String, fileURL: URL) throws -> String {
-        let data = try Data(contentsOf: fileURL)
-        guard let contents = String(data: data, encoding: .utf8) else {
-            return "Binary or non-text file; no text diff is available."
-        }
-        let lines = contents.components(separatedBy: "\n")
-        let visibleLines = contents.hasSuffix("\n") ? Array(lines.dropLast()) : lines
-        let escapedPath = path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\t", with: "\\t")
-        let additions = visibleLines.map { "+\($0)" }.joined(separator: "\n")
-        return "diff --git a/\(escapedPath) b/\(escapedPath)\nnew file mode 100644\n--- /dev/null\n+++ b/\(escapedPath)\n@@ -0,0 +1,\(visibleLines.count) @@\n\(additions)"
+    private func stage(_ list: [GitChange]) {
+        mutate { try await git.stage(root: $0, paths: list.map(\.path)) }
     }
 
-    private func fileURL(for id: GitChange.ID) -> URL {
-        let path = changes?.first(where: { $0.id == id })?.path ?? ""
-        return URL(fileURLWithPath: repositoryRoot ?? directory).appendingPathComponent(path)
+    private func unstage(_ list: [GitChange]) {
+        mutate { try await git.unstage(root: $0, paths: list.map(\.path)) }
     }
-}
 
-private struct ChangeRow: View {
-    let change: GitChange
+    private func stageAll() {
+        mutate { try await git.stageAll(root: $0) }
+    }
 
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(change.fileName)
-                .lineLimit(1)
-            if !change.directory.isEmpty {
-                Text(change.directory)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
+    private func unstageAll() {
+        mutate { try await git.unstageAll(root: $0) }
+    }
+
+    private func applyHunks(file: FileDiff, hunk: DiffHunk) {
+        guard let area = selectedChange?.area else { return }
+        let patch = file.patch(selecting: [hunk])
+        mutate { try await git.applyToIndex(root: $0, patch: patch, reverse: area == .staged) }
+    }
+
+    private func mutate(_ operation: @escaping (String) async throws -> Void) {
+        guard let repositoryRoot, !isBusy else { return }
+        Task {
+            isBusy = true
+            do {
+                try await operation(repositoryRoot)
+                actionError = nil
+            } catch {
+                actionError = error.localizedDescription
             }
-            Spacer(minLength: 4)
-            Text(change.label)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(change.color)
+            isBusy = false
+            await load()
+            await loadDiff()
         }
-        .tag(change.id)
-        .help(change.path)
+    }
+
+    private func open(_ id: GitChange.ID) {
+        guard let change = changes?.first(where: { $0.id == id }) else { return }
+        NSWorkspace.shared.open(fileURL(for: change))
+    }
+
+    private func reveal(_ id: GitChange.ID) {
+        guard let change = changes?.first(where: { $0.id == id }) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([fileURL(for: change)])
+    }
+
+    private func fileURL(for change: GitChange) -> URL {
+        URL(fileURLWithPath: repositoryRoot ?? directory).appendingPathComponent(change.path)
     }
 }
