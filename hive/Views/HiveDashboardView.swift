@@ -25,7 +25,10 @@ struct HiveDashboardView: View {
     @State private var worktreeRepository: HiveEnvironment?
     @State private var machineToRename: SavedHiveMachine?
     @State private var machineToRemove: SavedHiveMachine?
+    @State private var machineToRevoke: SavedHiveMachine?
     @State private var machineRenameText = ""
+    @State private var showingNearbyMachines = false
+    @State private var showingObservers = false
     @State private var showingTaskCenter = false
     @State private var showingLayoutManager = false
     @State private var requestedChangePath: String?
@@ -98,6 +101,12 @@ struct HiveDashboardView: View {
         .sheet(isPresented: $showingLayoutManager) {
             LayoutManagerView(workspace: viewModel.workspace)
         }
+        .sheet(isPresented: $showingNearbyMachines) {
+            NearbyMachinesSheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showingObservers) {
+            ObserverManagerView(workspace: viewModel.workspace, cli: HiveCLIService(executableURL: hiveURL))
+        }
         .alert("Rename machine", isPresented: Binding(get: { machineToRename != nil }, set: { if !$0 { machineToRename = nil } })) {
             TextField("Machine name", text: $machineRenameText)
             Button("Cancel", role: .cancel) { machineToRename = nil }
@@ -114,6 +123,13 @@ struct HiveDashboardView: View {
             }
             Button("Cancel", role: .cancel) { machineToRemove = nil }
         } message: { Text("This forgets the saved connection. Hive and its agents keep running on the remote machine.") }
+        .confirmationDialog("Revoke machine identity?", isPresented: Binding(get: { machineToRevoke != nil }, set: { if !$0 { machineToRevoke = nil } }), titleVisibility: .visible) {
+            Button("Revoke Identity", role: .destructive) {
+                if let machineToRevoke { Task { await viewModel.revokeMachine(machineToRevoke) } }
+                machineToRevoke = nil
+            }
+            Button("Cancel", role: .cancel) { machineToRevoke = nil }
+        } message: { Text("Hive forgets this machine’s pinned identity and disables it. You can trust it again later.") }
         .task { viewModel.start() }
         .onChange(of: viewModel.activeTabID) { saveDirectories() }
         .onChange(of: machinesExpanded) { _, expanded in
@@ -178,6 +194,8 @@ struct HiveDashboardView: View {
                 scratchIDs.append(tab.id)
             case .hive(let id):
                 if let hiveTab = viewModel.workspace.tab(id) { paneIDs.formUnion(hiveTab.paneIDs) }
+            case .remote, .remoteShell:
+                break
             }
         }
         terminals.retain(scratchTabs: scratchIDs, panes: paneIDs)
@@ -216,6 +234,9 @@ struct HiveDashboardView: View {
                 Button { showingLayoutManager = true } label: { Label("Layouts", systemImage: "rectangle.3.group") }
                     .buttonStyle(ToolbarPillButtonStyle())
                     .help("Export or apply a workspace layout")
+                Button { showingObservers = true } label: { Label("Observers", systemImage: "eye") }
+                    .buttonStyle(ToolbarPillButtonStyle())
+                    .help("Manage read-only web observer credentials")
                 Button { viewModel.showingOverview.toggle() } label: {
                     Label("Overview", systemImage: "rectangle.grid.2x2")
                 }
@@ -275,6 +296,10 @@ struct HiveDashboardView: View {
             guard let tab = viewModel.workspace.tab(id) else { return "Hive Tab" }
             let environment = viewModel.environments.first(where: { $0.id == tab.environmentID })
             return "\(tab.name) · \(environment.map(displayName) ?? tab.environmentID)"
+        case .remote(let machine, _, let title):
+            return "\(title) · \(machine)"
+        case .remoteShell(let machine, _):
+            return "SSH · \(machine)"
         }
     }
 
@@ -353,6 +378,9 @@ struct HiveDashboardView: View {
                             }
                             Divider()
                             Button("Rename…") { machineRenameText = machine.name; machineToRename = machine }
+                            if machine.identityID?.isEmpty == false {
+                                Button("Revoke Identity…", role: .destructive) { machineToRevoke = machine }
+                            }
                             Button("Remove…", role: .destructive) { machineToRemove = machine }
                         }
                     }
@@ -481,6 +509,7 @@ struct HiveDashboardView: View {
                     Button("Start Agent…") { startAgent(in: nil) }
                     Divider()
                     Button("Add Machine…") { showingAddMachine = true }
+                    Button("Discover Nearby…") { showingNearbyMachines = true }
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 13))
@@ -525,6 +554,20 @@ struct HiveDashboardView: View {
                         session: terminals.scratchSession(for: tab) { makeScratchSession(for: tab) },
                         onClose: { viewModel.requestCloseTab(tab.id) }
                     )
+                case .remote(let machine, let agentID, _):
+                    TerminalSurface(
+                        session: terminals.scratchSession(for: tab) {
+                            ShellTerminalSession(launch: TerminalLaunch(executable: hiveURL.path, arguments: ["--machine", machine, "agent", "attach", agentID], execName: nil, directory: FileManager.default.homeDirectoryForCurrentUser.path))
+                        },
+                        onClose: { viewModel.requestCloseTab(tab.id) }
+                    )
+                case .remoteShell(_, let host):
+                    TerminalSurface(
+                        session: terminals.scratchSession(for: tab) {
+                            ShellTerminalSession(launch: TerminalLaunch(executable: "/usr/bin/ssh", arguments: ["-tt", host], execName: nil, directory: FileManager.default.homeDirectoryForCurrentUser.path))
+                        },
+                        onClose: { viewModel.requestCloseTab(tab.id) }
+                    )
                 }
             }
             .id(tab.id)
@@ -551,7 +594,7 @@ struct HiveDashboardView: View {
                     if let agent = viewModel.agents.first(where: { $0.tabID == id }) { .agent(agent.id) }
                     else if let environmentID = viewModel.workspace.tab(id)?.environmentID { .environment(environmentID) }
                     else { nil }
-                case .scratch, nil: nil
+                case .scratch, .remote, .remoteShell, nil: nil
                 }
             },
             set: { item in

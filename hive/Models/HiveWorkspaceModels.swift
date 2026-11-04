@@ -195,6 +195,52 @@ struct HiveTaskResult: Decodable, Hashable {
     let screen: [String]?
 }
 
+struct HiveObserverCredential: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let state: String
+    let screens: Bool
+    let expiresAt: String
+    let lastUsedAt: String?
+    let connections: Int?
+    let scope: HiveObserverScope
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, state, screens, scope, connections
+        case expiresAt = "expires_at"
+        case lastUsedAt = "last_used_at"
+    }
+}
+
+struct HiveObserverScope: Decodable, Hashable {
+    let all: Bool?
+    let environments: [String]?
+    let panes: [String]?
+}
+
+struct HiveObserverList: Decodable {
+    let socket: String
+    let enabled: Bool
+    let credentials: [HiveObserverCredential]
+}
+
+struct HiveObserverCreated: Decodable {
+    let credential: HiveObserverCredential
+    let token: String
+    let socket: String
+}
+
+struct HiveObserverAuditEntry: Decodable, Identifiable {
+    let time: String
+    let action: String
+    let credential: String?
+    let name: String?
+    let detail: String?
+    let client: String?
+
+    var id: String { "\(time)-\(action)-\(credential ?? "")" }
+}
+
 struct HiveTerminalView: Decodable {
     let viewID: String
     let width: Int

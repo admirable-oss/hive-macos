@@ -4,6 +4,10 @@ import Foundation
 enum WorkspaceDestination: Hashable, Codable {
     /// One of the daemon's tabs, with its panes; shared with the TUI and any other client.
     case hive(tabID: String)
+    /// A remote agent's terminal, attached through `hive --machine … agent attach`.
+    case remote(machine: String, agentID: String, title: String)
+    /// An interactive SSH login to a saved machine.
+    case remoteShell(machine: String, host: String)
     /// A local login shell outside any environment. Only this window knows about it.
     case scratch
 }

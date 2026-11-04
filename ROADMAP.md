@@ -193,17 +193,17 @@ The original plan:
 
 ### Phase 3: Remote machines (P1)
 
-**In progress.**
+**Status: Complete (2026-11-04).**
 
-1. **Machines in the sidebar.**
+1. **Machines in the sidebar. Complete.**
    - Each saved machine has its own section with connection status and its agents.
    - Right-click: reconnect, disable, rename, remove.
-2. **Discover and pair.** A Bonjour-style "Nearby" list (`machine discover`).
+2. **Discover and pair. Complete.** A Bonjour-style "Nearby" list (`machine discover`).
    - Pairing shows the runtime's identity to confirm before trusting it.
    - Paired machines can be revoked.
-3. **Run anywhere.** Every action (start agent, create environment, open terminal) can target a
-   machine. Terminals to remote panes stream over the machine proxy.
-4. **Observers.** Create, revoke and audit read-only credentials, and open the web observer.
+3. **Run anywhere. Complete.** Create environments and start agents on a saved machine, inspect
+   remote agents, attach to remote agent terminals through the machine proxy, and open an SSH shell.
+4. **Observers. Complete.** Create, revoke and audit read-only credentials, and open the web observer.
 
 ### Phase 4: Extensibility (P1–P2)
 

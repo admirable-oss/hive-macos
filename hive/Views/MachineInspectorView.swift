@@ -4,6 +4,11 @@ import SwiftUI
 struct MachineInspectorView: View {
     let machine: SavedHiveMachine
     @ObservedObject var viewModel: AppViewModel
+    @State private var environmentID = ""
+    @State private var environmentPath = ""
+    @State private var selectedEnvironmentID = ""
+    @State private var selectedAgentKind = ""
+    @State private var actionError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -46,13 +51,62 @@ struct MachineInspectorView: View {
                             Text(agent.name.isEmpty ? agent.kind : agent.name)
                             Spacer()
                             Text(agentStateTitle(agent.state)).foregroundStyle(.secondary)
+                            Button("Open") { viewModel.openRemoteAgent(agent, on: machine) }
+                                .buttonStyle(.borderless)
                         }
                         .font(.callout)
                     }
                 }
             }
-            Text("Remote tabs and terminals are not yet available in the desktop app.")
-                .font(.callout).foregroundStyle(.secondary)
+            if viewModel.machineAgents[machine.name]?.isEmpty != false {
+                Text("No remote agents are currently available to attach.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 9) {
+                Text("Remote workspace").font(.headline)
+                HStack {
+                    TextField("Environment ID", text: $environmentID)
+                    TextField("Absolute remote path", text: $environmentPath)
+                }
+                Button("Create Environment") {
+                    Task {
+                        await viewModel.createRemoteEnvironment(on: machine, id: environmentID.trimmingCharacters(in: .whitespacesAndNewlines), path: environmentPath.trimmingCharacters(in: .whitespacesAndNewlines))
+                        if let error = viewModel.sidebarError { actionError = error } else { environmentID = ""; environmentPath = "" }
+                    }
+                }
+                .disabled(environmentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !environmentPath.hasPrefix("/"))
+
+                HStack {
+                    Picker("Environment", selection: $selectedEnvironmentID) {
+                        ForEach(viewModel.machineEnvironments[machine.name] ?? []) { env in Text(env.name.isEmpty ? env.id : env.name).tag(env.id) }
+                    }
+                    Picker("Agent", selection: $selectedAgentKind) {
+                        ForEach(viewModel.machineAgentKinds[machine.name] ?? []) { kind in Text(kind.name).tag(kind.id) }
+                    }
+                    Button("Start") {
+                        Task {
+                            await viewModel.startRemoteAgent(on: machine, kind: selectedAgentKind, environmentID: selectedEnvironmentID)
+                            actionError = viewModel.sidebarError
+                        }
+                    }
+                    .disabled(selectedEnvironmentID.isEmpty || selectedAgentKind.isEmpty)
+                }
+                Button { viewModel.openRemoteShell(machine) } label: { Label("Open SSH Shell", systemImage: "terminal") }
+                    .buttonStyle(.bordered)
+                if let actionError { Text(actionError).font(.caption).foregroundStyle(.red) }
+            }
+            .font(.callout)
+
+            if let environments = viewModel.machineEnvironments[machine.name], !environments.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Environments").font(.headline)
+                    ForEach(environments) { env in
+                        LabeledContent(env.name.isEmpty ? env.id : env.name, value: env.path)
+                            .font(.caption)
+                    }
+                }
+            }
 
             HStack {
                 Spacer()
@@ -69,6 +123,8 @@ struct MachineInspectorView: View {
             if viewModel.machineStatus?.name != machine.name {
                 await viewModel.refreshMachineStatus()
             }
+            if let env = viewModel.machineEnvironments[machine.name]?.first { selectedEnvironmentID = env.id }
+            if let kind = viewModel.machineAgentKinds[machine.name]?.first { selectedAgentKind = kind.id }
         }
     }
 }

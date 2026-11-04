@@ -5,8 +5,43 @@ struct SavedHiveMachine: Decodable, Identifiable {
     let host: String
     let session: String?
     let disabled: Bool?
+    let identityID: String?
 
     var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, host, session, disabled
+        case identityID = "id"
+    }
+}
+
+struct HiveNearbyMachine: Decodable, Identifiable, Hashable {
+    let name: String
+    let id: String
+    let host: String
+    let port: Int
+    let capabilities: [String]?
+    let state: String
+    let machine: String?
+    let note: String?
+}
+
+struct HiveNearbyResponse: Decodable {
+    let runtimes: [HiveNearbyMachine]
+}
+
+struct HivePairProof: Decodable {
+    let id: String
+    let name: String
+    let hostname: String?
+    let platform: String
+    let version: String
+}
+
+struct HivePairIdentity: Decodable {
+    let proof: HivePairProof
+    let fingerprint: String
+    let trust: String
 }
 
 struct HerdrImportPreview: Decodable {

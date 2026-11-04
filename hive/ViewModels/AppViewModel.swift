@@ -31,7 +31,10 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var machines: [SavedHiveMachine] = []
     @Published private(set) var machineStatuses: [String: HiveMachineStatus] = [:]
     @Published private(set) var machineAgents: [String: [HiveAgent]] = [:]
+    @Published private(set) var machineEnvironments: [String: [HiveEnvironment]] = [:]
+    @Published private(set) var machineAgentKinds: [String: [HiveAgentManifest]] = [:]
     @Published private(set) var refreshingMachines: Set<String> = []
+    @Published private(set) var nearbyMachines: [HiveNearbyMachine] = []
     @Published var inspectedMachine: SavedHiveMachine?
     @Published private(set) var machineStatus: HiveMachineStatus?
     @Published private(set) var checkingMachine = false
@@ -119,8 +122,14 @@ final class AppViewModel: ObservableObject {
             if status.reachable {
                 let remoteOutput = try await cli.run(["--machine", machine.name, "--json", "agent", "list"])
                 machineAgents[machine.name] = (try? JSONDecoder().decode(HiveAgentList.self, from: Data(remoteOutput.utf8)).agents) ?? []
+                async let environmentsOutput = cli.run(["--machine", machine.name, "--json", "env", "list"])
+                async let kindsOutput = cli.run(["--machine", machine.name, "--json", "agent", "manifests"])
+                if let output = try? await environmentsOutput, let data = output.data(using: .utf8) { machineEnvironments[machine.name] = try? JSONDecoder().decode([HiveEnvironment].self, from: data) }
+                if let output = try? await kindsOutput, let data = output.data(using: .utf8) { machineAgentKinds[machine.name] = try? JSONDecoder().decode([HiveAgentManifest].self, from: data) }
             } else {
                 machineAgents[machine.name] = []
+                machineEnvironments[machine.name] = []
+                machineAgentKinds[machine.name] = []
             }
         } catch {
             machineStatuses[machine.name] = HiveMachineStatus(name: machine.name, reachable: false, error: error.localizedDescription, disabled: machine.disabled, agents: nil, state: nil, identity: nil, version: nil)
@@ -154,6 +163,31 @@ final class AppViewModel: ObservableObject {
             _ = try await cli.run(["machine", "remove", machine.name])
             machineStatuses.removeValue(forKey: machine.name)
             machineAgents.removeValue(forKey: machine.name)
+            await loadMachines()
+        } catch { sidebarError = error.localizedDescription }
+    }
+
+    func discoverMachines() async {
+        do {
+            let json = try await cli.run(["--json", "machine", "discover"])
+            nearbyMachines = try JSONDecoder().decode(HiveNearbyResponse.self, from: Data(json.utf8)).runtimes
+            sidebarError = nil
+        } catch { sidebarError = error.localizedDescription }
+    }
+
+    func checkPairIdentity(_ nearby: HiveNearbyMachine, as name: String) async throws -> HivePairIdentity {
+        let json = try await cli.run(["--json", "machine", "pair", nearby.id, "--as", name, "--check", "--expect-id", nearby.id])
+        return try JSONDecoder().decode(HivePairIdentity.self, from: Data(json.utf8))
+    }
+
+    func pairMachine(_ nearby: HiveNearbyMachine, as name: String, expectedID: String) async throws {
+        _ = try await cli.run(["--json", "machine", "pair", nearby.id, "--as", name, "--yes", "--expect-id", expectedID])
+        await loadMachines()
+    }
+
+    func revokeMachine(_ machine: SavedHiveMachine) async {
+        do {
+            _ = try await cli.run(["machine", "revoke", machine.name])
             await loadMachines()
         } catch { sidebarError = error.localizedDescription }
     }
@@ -254,6 +288,42 @@ final class AppViewModel: ObservableObject {
         if agent.state == "done" {
             Task { await workspace.markSeen(agent: id) }
         }
+    }
+
+    func openRemoteAgent(_ agent: HiveAgent, on machine: SavedHiveMachine) {
+        showingOverview = false
+        if let existing = tabs.first(where: { if case .remote(let host, let id, _) = $0.destination { return host == machine.name && id == agent.id }; return false }) {
+            activeTabID = existing.id
+        } else {
+            append(WorkspaceTab(destination: .remote(machine: machine.name, agentID: agent.id, title: agent.name.isEmpty ? agent.kind : agent.name)))
+        }
+    }
+
+    func openRemoteShell(_ machine: SavedHiveMachine) {
+        showingOverview = false
+        if let existing = tabs.first(where: { if case .remoteShell(let name, _) = $0.destination { return name == machine.name }; return false }) {
+            activeTabID = existing.id
+        } else {
+            append(WorkspaceTab(destination: .remoteShell(machine: machine.name, host: machine.host)))
+        }
+    }
+
+    func createRemoteEnvironment(on machine: SavedHiveMachine, id: String, path: String) async {
+        do {
+            _ = try await cli.run(["--machine", machine.name, "--json", "env", "create", id, "--cwd", path])
+            await refreshMachine(machine)
+            sidebarError = nil
+        } catch { sidebarError = error.localizedDescription }
+    }
+
+    func startRemoteAgent(on machine: SavedHiveMachine, kind: String, environmentID: String) async {
+        do {
+            let output = try await cli.run(["--machine", machine.name, "--json", "agent", "start", "--kind", kind, "--env", environmentID])
+            let started = try JSONDecoder().decode(HiveAgentStarted.self, from: Data(output.utf8))
+            machineAgents[machine.name, default: []].append(started.agent)
+            openRemoteAgent(started.agent, on: machine)
+            sidebarError = nil
+        } catch { sidebarError = error.localizedDescription }
     }
 
     func openPane(_ id: String) {

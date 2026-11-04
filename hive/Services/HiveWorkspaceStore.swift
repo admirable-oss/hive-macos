@@ -299,6 +299,25 @@ final class HiveWorkspaceStore: ObservableObject {
         scheduleSnapshot()
     }
 
+    func observerList() async throws -> HiveObserverList {
+        try decode(HiveObserverList.self, from: try await call("observer.list", [:]))
+    }
+
+    func createObserver(name: String, all: Bool, environments: [String], screens: Bool, ttlSeconds: Int) async throws -> HiveObserverCreated {
+        let scope: [String: Any] = all ? ["all": true] : ["environments": environments]
+        return try decode(HiveObserverCreated.self, from: try await call("observer.create", [
+            "name": name, "scope": scope, "screens": screens, "ttl_seconds": ttlSeconds,
+        ]))
+    }
+
+    func revokeObserver(_ id: String) async throws {
+        _ = try await call("observer.revoke", ["id": id])
+    }
+
+    func observerAudit(limit: Int = 100) async throws -> [HiveObserverAuditEntry] {
+        try decode([HiveObserverAuditEntry].self, from: try await call("observer.audit", ["limit": limit]))
+    }
+
     func resumeAgent(_ id: String) async throws -> HiveAgent {
         let started = try decode(HiveAgentStarted.self, from: try await call("agent.resume", ["id": id]))
         upsert(started.agent, into: &agents)
