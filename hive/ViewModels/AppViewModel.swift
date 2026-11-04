@@ -28,6 +28,7 @@ final class AppViewModel: ObservableObject {
         didSet { saveTabs() }
     }
     @Published private(set) var sidebarError: String?
+    @Published private(set) var versionMismatch: String?
     @Published private(set) var machines: [SavedHiveMachine] = []
     @Published private(set) var machineStatuses: [String: HiveMachineStatus] = [:]
     @Published private(set) var machineAgents: [String: [HiveAgent]] = [:]
@@ -48,9 +49,9 @@ final class AppViewModel: ObservableObject {
 
     private static let savedTabsKey = "hive.desktop.tabs.v2"
 
-    init(hiveURL: URL) {
-        cli = HiveCLIService(executableURL: hiveURL)
-        workspace = HiveWorkspaceStore(hiveURL: hiveURL)
+    init(hiveURL: URL, sessionName: String = "default") {
+        cli = HiveCLIService(executableURL: hiveURL, sessionName: sessionName)
+        workspace = HiveWorkspaceStore(hiveURL: hiveURL, sessionName: sessionName)
 
         let restored = Self.loadTabs()
         tabs = restored.tabs
@@ -66,6 +67,12 @@ final class AppViewModel: ObservableObject {
             .store(in: &subscriptions)
         workspace.$agents
             .sink { [weak self] agents in self?.notifier.updateBadge(for: agents) }
+            .store(in: &subscriptions)
+        workspace.$connection
+            .sink { [weak self] connection in
+                guard case .connected(let version, _) = connection else { return }
+                Task { await self?.checkVersionMismatch(daemonVersion: version) }
+            }
             .store(in: &subscriptions)
 
         workspace.onAgentChange = { [weak self] previous, agent in
@@ -97,6 +104,23 @@ final class AppViewModel: ObservableObject {
             notifier.apply(config.notify)
         } catch {
             // Keep Hive's documented defaults until a valid config is available.
+        }
+    }
+
+    private func checkVersionMismatch(daemonVersion: String) async {
+        do {
+            let output = try await cli.run(["--json", "version"])
+            guard let data = output.data(using: .utf8),
+                  let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let cliVersion = value["version"] as? String else { return }
+            versionMismatch = cliVersion == daemonVersion ? nil : "Hive CLI is \(cliVersion), but the running daemon is \(daemonVersion). Update or restart Hive to sync versions."
+        } catch { versionMismatch = nil }
+    }
+
+    func updateHive() async {
+        await perform {
+            _ = try await self.cli.run(["update"])
+            self.versionMismatch = nil
         }
     }
 

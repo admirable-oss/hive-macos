@@ -8,6 +8,7 @@ private enum SidebarItem: Hashable {
 }
 struct HiveDashboardView: View {
     let hiveURL: URL
+    let sessionName: String
 
     @StateObject private var viewModel: AppViewModel
     @StateObject private var terminals = TerminalStore()
@@ -33,9 +34,10 @@ struct HiveDashboardView: View {
     @State private var showingLayoutManager = false
     @State private var requestedChangePath: String?
 
-    init(hiveURL: URL) {
+    init(hiveURL: URL, sessionName: String = "default") {
         self.hiveURL = hiveURL
-        _viewModel = StateObject(wrappedValue: AppViewModel(hiveURL: hiveURL))
+        self.sessionName = sessionName
+        _viewModel = StateObject(wrappedValue: AppViewModel(hiveURL: hiveURL, sessionName: sessionName))
     }
 
     var body: some View {
@@ -50,6 +52,19 @@ struct HiveDashboardView: View {
                 }
         }
         .toolbar { workspaceToolbar }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let notice = viewModel.versionMismatch {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                    Text(notice).font(.callout)
+                    Spacer()
+                    Button("Update Hive") { Task { await viewModel.updateHive() } }
+                        .buttonStyle(.borderedProminent)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .background(Color.hiveAmber.opacity(0.16))
+            }
+        }
         .tint(.hiveAmber)
         .background {
             keyboardShortcuts.frame(width: 0, height: 0).hidden()
@@ -105,7 +120,7 @@ struct HiveDashboardView: View {
             NearbyMachinesSheet(viewModel: viewModel)
         }
         .sheet(isPresented: $showingObservers) {
-            ObserverManagerView(workspace: viewModel.workspace, cli: HiveCLIService(executableURL: hiveURL))
+            ObserverManagerView(workspace: viewModel.workspace, cli: HiveCLIService(executableURL: hiveURL, sessionName: sessionName))
         }
         .alert("Rename machine", isPresented: Binding(get: { machineToRename != nil }, set: { if !$0 { machineToRename = nil } })) {
             TextField("Machine name", text: $machineRenameText)

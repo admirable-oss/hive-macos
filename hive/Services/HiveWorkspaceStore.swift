@@ -38,9 +38,18 @@ final class HiveWorkspaceStore: ObservableObject {
     private var portScanTask: Task<Void, Never>?
     private let decoder = JSONDecoder()
 
-    init(hiveURL: URL) {
+    init(hiveURL: URL, sessionName: String = "default") {
         self.hiveURL = hiveURL
+        let environment = ProcessInfo.processInfo.environment
+        let home = environment["HIVE_HOME"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? (NSHomeDirectory() as NSString).appendingPathComponent(".hive")
+        let root = sessionName == "default" ? home : (home as NSString).appendingPathComponent("sessions/\(sessionName)")
+        socketPath = sessionName == "default"
+            ? (environment["HIVE_SOCKET_PATH"].flatMap { $0.isEmpty ? nil : $0 } ?? (root as NSString).appendingPathComponent("hive.sock"))
+            : (root as NSString).appendingPathComponent("hive.sock")
     }
+
+    private let socketPath: String
 
     var isConnected: Bool {
         if case .connected = connection { return true }
@@ -99,7 +108,7 @@ final class HiveWorkspaceStore: ObservableObject {
 
     /// One connection's life: hello, subscribe, snapshot, then apply events until it drops.
     private func connectAndRun() async throws {
-        let client = HiveSocketClient()
+        let client = HiveSocketClient(socketPath: socketPath)
         defer {
             client.close()
             if self.client === client { self.client = nil }

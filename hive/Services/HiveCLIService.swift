@@ -2,15 +2,17 @@ import Foundation
 
 struct HiveCLIService {
     let executableURL: URL
+    var sessionName: String?
 
     func run(_ arguments: [String]) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
+        let commandArguments = (sessionName.map { ["--session", $0] } ?? []) + arguments
+        return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
                 let output = Pipe()
                 let errors = Pipe()
                 process.executableURL = executableURL
-                process.arguments = arguments
+                process.arguments = commandArguments
                 process.standardOutput = output
                 process.standardError = errors
 

@@ -4,6 +4,7 @@ struct ContentView: View {
     @StateObject private var setupViewModel = FirstLaunchViewModel()
     @AppStorage("hive.onboarding.complete") private var onboardingComplete = false
     @AppStorage("hive.appearance") private var appearance = "system"
+    @AppStorage("hive.session.name") private var sessionName = "default"
 
     var body: some View {
         Group {
@@ -14,7 +15,8 @@ struct ContentView: View {
                 FirstLaunchView(viewModel: setupViewModel)
             case .installed(let hiveURL):
                 if onboardingComplete {
-                    HiveDashboardView(hiveURL: hiveURL)
+                    HiveDashboardView(hiveURL: hiveURL, sessionName: sessionName)
+                        .id(sessionName)
                 } else {
                     HiveOnboardingView(hiveURL: hiveURL) {
                         onboardingComplete = true

@@ -207,6 +207,8 @@ The original plan:
 
 ### Phase 4: Extensibility (P1–P2)
 
+**Skipped per user request (2026-11-04).**
+
 1. **Plugin palette (⌘⇧P).** Runs plugin actions and palette entries; async actions show progress.
 2. **Plugin UI contributions.**
    - Sidebar cards render as native card views.
@@ -218,12 +220,15 @@ The original plan:
 
 ### Phase 5: Settings, sessions and upkeep (P1–P2)
 
-1. **Settings window for `config.toml`.** Tabs for General, Terminal, Notifications, Theme, Remote,
-   Worktrees and Plugins. Writes back to the file and shows the runtime's validation warnings
-   inline.
-2. **Sessions.** Switch between sessions, save, restore and restore `--fresh`.
-3. **Upkeep.** Version mismatch banner and `hive update`; `gc` with a dry-run preview; daemon
-   start, stop and health.
+**Status: Complete (2026-11-04).**
+
+1. **Settings window for `config.toml`. Complete.** General, Terminal, Notifications, Theme,
+   Remote, Worktrees and Plugins tabs edit their TOML sections, validate before saving and keep a
+   backup.
+2. **Sessions. Complete.** Switch the active workspace session, save a snapshot, restore lost panes,
+   or restore with `--fresh`.
+3. **Upkeep. Complete.** A dashboard version mismatch banner, runtime status, daemon start/stop,
+   Hive update, and garbage collection with a dry-run preview.
 
 ---
 

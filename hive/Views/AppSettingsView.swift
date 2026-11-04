@@ -5,6 +5,7 @@ struct AppSettingsView: View {
     @AppStorage("hive.appearance") private var appearance = "system"
     @AppStorage(AgentNotifier.effectiveStatesKey) private var notifyStates = "blocked, done"
     @AppStorage(AgentNotifier.systemNotificationsKey) private var systemNotifications = false
+    @AppStorage("hive.session.name") private var sessionName = "default"
 
     private var preferredColorScheme: ColorScheme? {
         switch appearance {
@@ -15,7 +16,8 @@ struct AppSettingsView: View {
     }
 
     var body: some View {
-        Form {
+        TabView {
+          Form {
             Section("Appearance") {
                 Picker("Mode", selection: $appearance) {
                     Text("System").tag("system")
@@ -37,17 +39,42 @@ struct AppSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+          }
+          .tabItem { Label("General", systemImage: "gearshape") }
+
+          Group {
+              if let hiveURL {
+                  ConfigSettingsView(cli: HiveCLIService(executableURL: hiveURL, sessionName: sessionName))
+              } else { ProgressView("Finding Hive CLI…") }
+          }
+          .tabItem { Label("Configuration", systemImage: "slider.horizontal.3") }
+
+          Group {
+              if let hiveURL { SessionSettingsView(hiveURL: hiveURL, sessionName: $sessionName) }
+              else { ProgressView("Finding Hive CLI…") }
+          }
+          .tabItem { Label("Sessions", systemImage: "square.stack.3d.up") }
+
+          Group {
+              if let hiveURL { UpkeepSettingsView(hiveURL: hiveURL, sessionName: sessionName) }
+              else { ProgressView("Finding Hive CLI…") }
+          }
+          .tabItem { Label("Upkeep", systemImage: "wrench.and.screwdriver") }
+
+          Form {
             Section("Agent integrations") {
                 if let hiveURL {
                     IntegrationHooksView(hiveURL: hiveURL)
                 } else {
-                    ProgressView("Finding Hive CLI…").task { hiveURL = await HiveInstallationService.locateInstalledHive() }
+                    ProgressView("Finding Hive CLI…")
                 }
             }
+          }
+          .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: 720, height: 600)
         .preferredColorScheme(preferredColorScheme)
+        .task { if hiveURL == nil { hiveURL = await HiveInstallationService.locateInstalledHive() } }
     }
 }
