@@ -380,6 +380,42 @@ private struct GitChange: Identifiable, Hashable {
     }
 }
 
+private struct DiffLine: Identifiable {
+    enum Kind { case added, removed, hunk, metadata, context }
+    let id: Int
+    let text: String
+    let kind: Kind
+
+    init(id: Int, text: String) {
+        self.id = id
+        self.text = text
+        if text.hasPrefix("+") && !text.hasPrefix("+++") { kind = .added }
+        else if text.hasPrefix("-") && !text.hasPrefix("---") { kind = .removed }
+        else if text.hasPrefix("@@") { kind = .hunk }
+        else if text.hasPrefix("diff ") || text.hasPrefix("index ") || text.hasPrefix("---") || text.hasPrefix("+++") { kind = .metadata }
+        else { kind = .context }
+    }
+
+    var foreground: Color {
+        switch kind {
+        case .added: Color(red: 0.48, green: 0.84, blue: 0.61)
+        case .removed: Color(red: 0.98, green: 0.51, blue: 0.49)
+        case .hunk: Color(red: 0.48, green: 0.69, blue: 0.98)
+        case .metadata: .secondary
+        case .context: .primary.opacity(0.84)
+        }
+    }
+
+    var background: Color {
+        switch kind {
+        case .added: Color.green.opacity(0.10)
+        case .removed: Color.red.opacity(0.10)
+        case .hunk: Color.blue.opacity(0.08)
+        case .metadata, .context: .clear
+        }
+    }
+}
+
 private struct ChangesView: View {
     let directory: String
     let changeToken: AnyHashable
@@ -393,6 +429,10 @@ private struct ChangesView: View {
     @State private var reloadToken = UUID()
     @State private var diffText = ""
     @State private var diffError: String?
+
+    private var diffLines: [DiffLine] {
+        diffText.components(separatedBy: "\n").enumerated().map { DiffLine(id: $0.offset, text: $0.element) }
+    }
 
     private let git = HiveCLIService(executableURL: URL(fileURLWithPath: "/usr/bin/git"))
 
@@ -451,12 +491,21 @@ private struct ChangesView: View {
                         } else if diffText.isEmpty {
                             ContentUnavailableView("Select a Changed File", systemImage: "doc.text.magnifyingglass", description: Text("Its Git diff appears here."))
                         } else {
-                            ScrollView {
-                                Text(diffText)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(10)
+                            ScrollView([.horizontal, .vertical]) {
+                                LazyVStack(alignment: .leading, spacing: 0) {
+                                    ForEach(diffLines) { line in
+                                        Text(line.text.isEmpty ? " " : line.text)
+                                            .font(.system(size: 10.5, design: .monospaced))
+                                            .foregroundStyle(line.foreground)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 1)
+                                            .background(line.background)
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                                .frame(minWidth: 0, alignment: .leading)
+                                .padding(.vertical, 6)
                             }
                         }
                     }
@@ -479,9 +528,17 @@ private struct ChangesView: View {
             repositoryRoot = root
             branch = currentBranch?.isEmpty == false ? currentBranch : nil
             changes = GitChange.parse(output)
+            selection.formIntersection(Set(changes?.map(\.id) ?? []))
             selectRequestedPath(requestedPath)
+            if selection.isEmpty, let first = changes?.first { selection = [first.id] }
             error = nil
         } catch {
+            repositoryRoot = nil
+            branch = nil
+            changes = nil
+            selection = []
+            diffText = ""
+            diffError = nil
             self.error = error.localizedDescription
         }
     }
@@ -497,17 +554,37 @@ private struct ChangesView: View {
             diffError = nil
             return
         }
+        diffText = ""
+        diffError = nil
         do {
-            var text = try await git.run(["-C", root, "diff", "--no-ext-diff", "HEAD", "--", change.path])
-            if text.isEmpty, FileManager.default.fileExists(atPath: URL(fileURLWithPath: root).appendingPathComponent(change.path).path) {
-                let contents = try String(contentsOf: URL(fileURLWithPath: root).appendingPathComponent(change.path), encoding: .utf8)
-                text = "--- /dev/null\n+++ b/\(change.path)\n" + contents.split(separator: "\n", omittingEmptySubsequences: false).map { "+\($0)" }.joined(separator: "\n")
+            let fileURL = URL(fileURLWithPath: root).appendingPathComponent(change.path)
+            let text: String
+            if change.code == "?" {
+                text = try untrackedDiff(path: change.path, fileURL: fileURL)
+            } else if change.area == .staged {
+                text = try await git.run(["-C", root, "diff", "--cached", "--no-ext-diff", "--", change.path])
+            } else {
+                text = try await git.run(["-C", root, "diff", "--no-ext-diff", "--", change.path])
             }
+            guard !Task.isCancelled, selection.first == id else { return }
             diffText = text.isEmpty ? "No textual diff is available for this file." : text
             diffError = nil
         } catch {
+            guard !Task.isCancelled, selection.first == id else { return }
             diffError = error.localizedDescription
         }
+    }
+
+    private func untrackedDiff(path: String, fileURL: URL) throws -> String {
+        let data = try Data(contentsOf: fileURL)
+        guard let contents = String(data: data, encoding: .utf8) else {
+            return "Binary or non-text file; no text diff is available."
+        }
+        let lines = contents.components(separatedBy: "\n")
+        let visibleLines = contents.hasSuffix("\n") ? Array(lines.dropLast()) : lines
+        let escapedPath = path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\t", with: "\\t")
+        let additions = visibleLines.map { "+\($0)" }.joined(separator: "\n")
+        return "diff --git a/\(escapedPath) b/\(escapedPath)\nnew file mode 100644\n--- /dev/null\n+++ b/\(escapedPath)\n@@ -0,0 +1,\(visibleLines.count) @@\n\(additions)"
     }
 
     private func fileURL(for id: GitChange.ID) -> URL {

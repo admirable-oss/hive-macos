@@ -1,6 +1,9 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
+    @ObservedObject var menuBarStore: MenuBarAgentStore
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var setupViewModel = FirstLaunchViewModel()
     @AppStorage("hive.onboarding.complete") private var onboardingComplete = false
     @AppStorage("hive.appearance") private var appearance = "system"
@@ -17,6 +20,15 @@ struct ContentView: View {
                 if onboardingComplete {
                     HiveDashboardView(hiveURL: hiveURL, sessionName: sessionName)
                         .id(sessionName)
+                        .onChange(of: sessionName) { _, value in menuBarStore.selectSession(value) }
+                        .task {
+                            menuBarStore.openAgentWindow = { agentID in
+                                UserDefaults.standard.set(agentID, forKey: "hive.menu.pending-agent")
+                                openWindow(id: "main")
+                                NSApp.activate(ignoringOtherApps: true)
+                            }
+                            menuBarStore.start(sessionName: sessionName)
+                        }
                 } else {
                     HiveOnboardingView(hiveURL: hiveURL) {
                         onboardingComplete = true

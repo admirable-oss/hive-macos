@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private enum SidebarItem: Hashable {
     case environment(String)
@@ -18,6 +19,7 @@ struct HiveDashboardView: View {
     @AppStorage("hive.desktop.machinesExpanded") private var machinesExpanded = false
     @AppStorage("hive.desktop.inspector") private var inspectorPanel: InspectorPanel?
     @AppStorage("hive.desktop.lastInspector") private var lastInspectorPanel: InspectorPanel = .files
+    @AppStorage("hive.menu.pending-agent") private var pendingAgentID = ""
     @State private var showingCreateEnvironment = false
     @State private var showingStartAgent = false
     @State private var startAgentEnvironmentID: String?
@@ -146,6 +148,8 @@ struct HiveDashboardView: View {
             Button("Cancel", role: .cancel) { machineToRevoke = nil }
         } message: { Text("Hive forgets this machine’s pinned identity and disables it. You can trust it again later.") }
         .task { viewModel.start() }
+        .task { openPendingAgentIfAvailable() }
+        .onChange(of: viewModel.agents.count) { _, _ in openPendingAgentIfAvailable() }
         .onChange(of: viewModel.activeTabID) { saveDirectories() }
         .onChange(of: machinesExpanded) { _, expanded in
             if expanded { for machine in viewModel.machines where machine.disabled != true { Task { await viewModel.refreshMachine(machine) } } }
@@ -154,6 +158,14 @@ struct HiveDashboardView: View {
             saveDirectories()
         }
         .frame(minWidth: 820, minHeight: 540)
+    }
+
+    private func openPendingAgentIfAvailable() {
+        guard !pendingAgentID.isEmpty,
+              viewModel.agents.contains(where: { $0.id == pendingAgentID }) else { return }
+        let agentID = pendingAgentID
+        pendingAgentID = ""
+        viewModel.openAgent(agentID)
     }
 
     private var keyboardShortcuts: some View {
@@ -356,8 +368,11 @@ struct HiveDashboardView: View {
                         )
                     } else {
                         ForEach(filteredAgents) { agent in
-                            AgentSidebarRow(agent: agent)
+                            AgentSidebarRow(agent: agent) { image in
+                                Task { await viewModel.pasteImage(image, toAgent: agent.id) }
+                            }
                                 .tag(SidebarItem.agent(agent.id))
+                                .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
                                 .contextMenu { agentMenu(agent) }
                         }
                     }
@@ -372,16 +387,19 @@ struct HiveDashboardView: View {
                             ForEach(viewModel.machineAgents[machine.name] ?? []) { agent in
                                 HStack(spacing: 7) {
                                     StatusDot(color: agentStateColor(agent.state))
+                                    if agent.state != "exited" { AgentProviderIcon(kind: agent.kind, size: 10) }
                                     Text(agent.name.isEmpty ? agent.kind : agent.name).lineLimit(1)
                                     Spacer(minLength: 2)
                                     Text(agentStateTitle(agent.state)).font(.system(size: 10)).foregroundStyle(.secondary)
                                 }
                                 .font(.system(size: 11))
-                                .padding(.leading, 18)
+                                .padding(.leading, 15)
+                                .padding(.vertical, 1)
                                 .selectionDisabled()
                             }
                         }
                         .tag(SidebarItem.machine(machine.name))
+                        .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
                         .contentShape(Rectangle())
                         .onTapGesture { viewModel.inspectMachine(machine) }
                         .contextMenu {
@@ -407,6 +425,21 @@ struct HiveDashboardView: View {
                 }
             }
             .listStyle(.sidebar)
+            .environment(\.defaultMinListRowHeight, 22)
+            .dropDestination(for: URL.self) { urls, _ in
+                let folders = urls.filter { url in
+                    var isDirectory: ObjCBool = false
+                    return url.isFileURL && FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+                }
+                guard !folders.isEmpty else { return false }
+                Task {
+                    for folder in folders {
+                        await viewModel.createEnvironment(name: folder.lastPathComponent, path: folder.path)
+                    }
+                }
+                return true
+            }
+            .help("Drop a folder here to add it as an environment")
 
             sidebarFooter
         }
@@ -650,6 +683,7 @@ struct HiveDashboardView: View {
     private func environmentSidebarRow(_ environment: HiveEnvironment) -> some View {
         EnvironmentSidebarRow(environment: environment, ports: viewModel.listeningPorts[environment.id] ?? [])
             .tag(SidebarItem.environment(environment.id))
+            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
             .contextMenu { environmentMenu(environment) }
     }
 
@@ -744,10 +778,10 @@ private struct SidebarSectionHeader: View {
     var showsDivider = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 4) {
             if showsDivider {
                 Divider()
-                    .padding(.top, 6)
+                    .padding(.top, 3)
             }
             HStack(spacing: 6) {
                 Image(systemName: symbol)
@@ -783,7 +817,7 @@ private struct SidebarEmptyState: View {
             }
         }
         .font(.callout)
-        .padding(.vertical, 2)
+        .padding(.vertical, 1)
         .selectionDisabled()
     }
 }
@@ -799,9 +833,9 @@ private struct EnvironmentSidebarRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             StatusDot(color: environment.status == "ready" ? .hiveAmber : .secondary)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text(environment.name.isEmpty ? environment.id : environment.name)
                     .lineLimit(1)
                 if let detail {
@@ -812,33 +846,50 @@ private struct EnvironmentSidebarRow: View {
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 1)
         .help(environment.path)
     }
 }
 
 private struct AgentSidebarRow: View {
     let agent: HiveAgent
+    let onDropImage: (Data) -> Void
+    @State private var isDropTargeted = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             StatusDot(color: agentStateColor(agent.state), isGlowing: agent.state == "working")
-            VStack(alignment: .leading, spacing: 1) {
+            if agent.state != "exited" { AgentProviderIcon(kind: agent.kind, size: 10) }
+            VStack(alignment: .leading, spacing: 0) {
                 Text(agent.name.isEmpty ? agent.kind : agent.name)
+                    .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
-                Text("\(agent.kind) · \(agent.environmentID)")
-                    .font(.system(size: 11))
+                Text(agent.environmentID)
+                    .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
             Text(agentStateTitle(agent.state))
-                .font(.system(size: 11))
+                .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, isDropTargeted ? 5 : 0)
+        .background(isDropTargeted ? Color.hiveAmber.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 7))
+        .frame(height: 40)
         .help(agent.reason ?? "\(agent.kind) · \(agent.state)")
+        .onDrop(of: [UTType.image.identifier], isTargeted: $isDropTargeted) { providers in
+            guard agent.paneID != nil, let provider = providers.first else { return false }
+            _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                guard let data, let image = NSImage(data: data),
+                      let tiff = image.tiffRepresentation,
+                      let bitmap = NSBitmapImageRep(data: tiff),
+                      let png = bitmap.representation(using: .png, properties: [:]) else { return }
+                DispatchQueue.main.async { onDropImage(png) }
+            }
+            return true
+        }
     }
 }
 

@@ -80,11 +80,12 @@ final class AppViewModel: ObservableObject {
         }
         notifier.isShowing = { [weak self] agent in self?.isShowing(agent) ?? false }
         notifier.onOpen = { [weak self] id in
-            NSApp.activate()
-            self?.openAgent(id)
+            NSApp.activate(ignoringOtherApps: true)
+            if let self { self.openAgent(id) }
+            else { MenuBarAgentStore.shared.openAgent(id) }
         }
-        notifier.onKeys = { [weak self] id, keys in
-            Task { await self?.sendKeys(keys, toAgent: id) }
+        notifier.onKeys = { id, keys in
+            Task { await MenuBarAgentStore.shared.send(keys, to: id) }
         }
     }
 
@@ -521,6 +522,17 @@ final class AppViewModel: ObservableObject {
 
     func sendKeys(_ keys: [String], toAgent id: String) async {
         await perform { try await self.workspace.sendKeys(toAgent: id, keys) }
+    }
+
+    func pasteImage(_ png: Data, toAgent id: String) async {
+        await perform {
+            guard let agent = self.workspace.agents.first(where: { $0.id == id }),
+                  let paneID = agent.paneID,
+                  let pane = self.workspace.panes[paneID] else {
+                throw NSError(domain: "Hive", code: 1, userInfo: [NSLocalizedDescriptionKey: "This agent has no active terminal to receive an image."])
+            }
+            _ = try await self.workspace.sendImage(png: png, toProcess: pane.processID, viewID: nil)
+        }
     }
 
     func stopAgent(_ id: String) async {

@@ -374,7 +374,8 @@ struct TerminalSurface: View {
             .background(TerminalPalette(colorScheme).background)
             .onDrop(of: [UTType.image.identifier], isTargeted: nil) { providers in
                 guard let pane = session as? PaneTerminalSession,
-                      let provider = providers.first else { return false }
+                      let provider = providers.first,
+                      !provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { return false }
                 _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
                     guard let data else { return }
                     Task { @MainActor in
@@ -385,6 +386,14 @@ struct TerminalSurface: View {
                         pane.pasteImage(png)
                     }
                 }
+                return true
+            }
+            .dropDestination(for: URL.self) { urls, _ in
+                let paths = urls.filter(\.isFileURL).map { Self.shellQuoted($0.path) }
+                guard !paths.isEmpty else { return false }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(paths.joined(separator: " "), forType: .string)
+                session.terminalView.paste(session.terminalView)
                 return true
             }
             .overlay {
@@ -403,6 +412,10 @@ struct TerminalSurface: View {
             }
             .animation(.easeOut(duration: 0.2), value: session.isRunning)
             .animation(.easeOut(duration: 0.12), value: isFocused)
+    }
+
+    private static func shellQuoted(_ path: String) -> String {
+        "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
     private var exitBanner: some View {

@@ -1,5 +1,5 @@
 import AppKit
-import UserNotifications
+@preconcurrency import UserNotifications
 
 struct HiveConfigDocument: Decodable {
     struct Notifications: Decodable {
@@ -30,6 +30,8 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
     private var notifyOn: Set<String> = ["blocked", "done"]
     private var notifyByAgent: [String: Set<String>] = [:]
     private var systemNotificationsEnabled = false
+    private var lastStateByAgent: [String: String] = [:]
+    private var authorizationCheckInFlight = false
 
     private enum Identifier {
         static let blockedCategory = "agent.blocked"
@@ -51,7 +53,6 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationCategory(identifier: Identifier.blockedCategory, actions: [approve, deny, open], intentIdentifiers: []),
             UNNotificationCategory(identifier: Identifier.doneCategory, actions: [open], intentIdentifiers: []),
         ])
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
     func apply(_ config: HiveConfigDocument.Notifications?) {
@@ -60,10 +61,24 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
         systemNotificationsEnabled = config?.system ?? false
         UserDefaults.standard.set(notifyOn.sorted().joined(separator: ", "), forKey: Self.effectiveStatesKey)
         UserDefaults.standard.set(systemNotificationsEnabled, forKey: Self.systemNotificationsKey)
+        guard !systemNotificationsEnabled, !authorizationCheckInFlight else { return }
+        authorizationCheckInFlight = true
+        let notificationCenter = center
+        notificationCenter.getNotificationSettings { [weak self] settings in
+            guard settings.authorizationStatus == .notDetermined else {
+                Task { @MainActor [weak self] in self?.authorizationCheckInFlight = false }
+                return
+            }
+            notificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
+                Task { @MainActor [weak self] in self?.authorizationCheckInFlight = false }
+            }
+        }
     }
 
     func agentChanged(from previous: HiveAgent?, to agent: HiveAgent) {
-        guard previous?.state != agent.state else { return }
+        let oldState = lastStateByAgent[agent.id] ?? previous?.state
+        lastStateByAgent[agent.id] = agent.state
+        guard oldState != agent.state else { return }
         let identifier = "agent-\(agent.id)"
         // Whatever it said before is out of date now.
         center.removeDeliveredNotifications(withIdentifiers: [identifier])
@@ -91,6 +106,10 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
         content.threadIdentifier = agent.environmentID
         content.userInfo = [Identifier.agentKey: agent.id]
         center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
+    }
+
+    func resetStateTracking() {
+        lastStateByAgent.removeAll()
     }
 
     func updateBadge(for agents: [HiveAgent]) {

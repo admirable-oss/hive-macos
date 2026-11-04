@@ -236,14 +236,14 @@ The original plan:
 
 These are what make the app worth opening instead of the TUI, ranked by value for effort.
 
-1. **Menu bar extra (P0, M).** Every agent's state at a glance, plus one-click approve/deny for
-   blocked agents. The menu bar icon tints amber when something needs you. It keeps working with
-   the main window closed.
+1. **Menu bar extra (P0, M). Complete (2026-11-04).** Every agent's state at a glance, plus one-click
+   approve/deny for blocked agents. The menu bar icon tints amber when something needs you and stays
+   connected after the main window closes.
 2. **Actionable notifications and Dock badge (P0, M).** Described in Phase 1. Approve a blocked
    agent without leaving the app you're in.
 3. **Diffs in the Changes panel (P1, M).** Side-by-side or inline diffs, stage or unstage files and
    hunks, and a commit box. Quick Look covers new files.
-4. **Drag and drop (P1, S).**
+4. **Drag and drop (P1, S). Complete (2026-11-04).**
    - Drop a folder on the sidebar to create an environment.
    - Drop files into a terminal to type their paths.
    - Drop a plan file to run it.
