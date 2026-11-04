@@ -20,6 +20,11 @@ struct HiveMachineStatus: Decodable {
     let name: String
     let reachable: Bool
     let error: String?
+    let disabled: Bool?
+    let agents: Int?
+    let state: String?
+    let identity: String?
+    let version: String?
 }
 
 struct HiveEnvironment: Decodable, Identifiable, Hashable {

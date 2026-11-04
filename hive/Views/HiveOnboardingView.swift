@@ -4,10 +4,12 @@ import SwiftUI
 struct HiveOnboardingView: View {
     @StateObject private var viewModel: OnboardingViewModel
     @AppStorage("hive.appearance") private var appearance = "system"
+    let hiveURL: URL
     let onFinish: () -> Void
 
     init(hiveURL: URL, onFinish: @escaping () -> Void) {
         _viewModel = StateObject(wrappedValue: OnboardingViewModel(hiveURL: hiveURL))
+        self.hiveURL = hiveURL
         self.onFinish = onFinish
     }
 
@@ -246,6 +248,10 @@ struct HiveOnboardingView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            IntegrationHooksView(hiveURL: hiveURL)
+                .padding(18)
+                .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
         }
     }
 

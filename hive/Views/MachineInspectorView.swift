@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// A saved machine is searchable before remote workspace support is available.
-/// This sheet verifies its SSH reachability and shows the saved connection details.
+/// A saved machine's SSH reachability, remote agents, and connection details.
 struct MachineInspectorView: View {
     let machine: SavedHiveMachine
     @ObservedObject var viewModel: AppViewModel
@@ -38,9 +37,22 @@ struct MachineInspectorView: View {
                 Text("Connection has not been checked.").foregroundStyle(.secondary)
             }
 
-            Text("Remote workspace tabs and terminals will be available when machine support is connected to the desktop workspace.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            if let agents = viewModel.machineAgents[machine.name], !agents.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Agents").font(.headline)
+                    ForEach(agents) { agent in
+                        HStack {
+                            Circle().fill(agentStateColor(agent.state)).frame(width: 7, height: 7)
+                            Text(agent.name.isEmpty ? agent.kind : agent.name)
+                            Spacer()
+                            Text(agentStateTitle(agent.state)).foregroundStyle(.secondary)
+                        }
+                        .font(.callout)
+                    }
+                }
+            }
+            Text("Remote tabs and terminals are not yet available in the desktop app.")
+                .font(.callout).foregroundStyle(.secondary)
 
             HStack {
                 Spacer()

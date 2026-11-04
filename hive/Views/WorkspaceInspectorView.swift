@@ -32,6 +32,7 @@ struct WorkspaceInspectorView: View {
     let directory: String
     /// Changes whenever Hive reports new git counts, so the Changes panel reloads on its own.
     let changeToken: AnyHashable
+    let selectedChangePath: String?
     @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
@@ -40,7 +41,7 @@ struct WorkspaceInspectorView: View {
             FileBrowserView(directory: directory)
                 .id(directory)
         case .changes:
-            ChangesView(directory: directory, changeToken: changeToken)
+            ChangesView(directory: directory, changeToken: changeToken, requestedPath: selectedChangePath)
                 .id(directory)
         case .agent:
             if let agent = viewModel.activeAgent {
@@ -382,6 +383,7 @@ private struct GitChange: Identifiable, Hashable {
 private struct ChangesView: View {
     let directory: String
     let changeToken: AnyHashable
+    let requestedPath: String?
 
     @State private var repositoryRoot: String?
     @State private var branch: String?
@@ -389,6 +391,8 @@ private struct ChangesView: View {
     @State private var selection: Set<GitChange.ID> = []
     @State private var error: String?
     @State private var reloadToken = UUID()
+    @State private var diffText = ""
+    @State private var diffError: String?
 
     private let git = HiveCLIService(executableURL: URL(fileURLWithPath: "/usr/bin/git"))
 
@@ -414,33 +418,55 @@ private struct ChangesView: View {
             } else if let changes, changes.isEmpty {
                 ContentUnavailableView("No Changes", systemImage: "checkmark.circle", description: Text("The working tree is clean."))
             } else {
-                List(selection: $selection) {
-                    if !staged.isEmpty {
-                        Section("Staged") {
-                            ForEach(staged) { ChangeRow(change: $0) }
+                VSplitView {
+                    List(selection: $selection) {
+                        if !staged.isEmpty {
+                            Section("Staged") {
+                                ForEach(staged) { ChangeRow(change: $0) }
+                            }
+                        }
+                        if !unstaged.isEmpty {
+                            Section("Changes") {
+                                ForEach(unstaged) { ChangeRow(change: $0) }
+                            }
                         }
                     }
-                    if !unstaged.isEmpty {
-                        Section("Changes") {
-                            ForEach(unstaged) { ChangeRow(change: $0) }
+                    .listStyle(.sidebar)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 120)
+                    .contextMenu(forSelectionType: GitChange.ID.self) { ids in
+                        if !ids.isEmpty {
+                            Button("Open") { ids.forEach { NSWorkspace.shared.open(fileURL(for: $0)) } }
+                            Button("Reveal in Finder") {
+                                NSWorkspace.shared.activateFileViewerSelecting(ids.map(fileURL(for:)))
+                            }
+                        }
+                    } primaryAction: { ids in
+                        ids.forEach { NSWorkspace.shared.open(fileURL(for: $0)) }
+                    }
+
+                    Group {
+                        if let diffError {
+                            ContentUnavailableView("Can’t Read Diff", systemImage: "exclamationmark.triangle", description: Text(diffError))
+                        } else if diffText.isEmpty {
+                            ContentUnavailableView("Select a Changed File", systemImage: "doc.text.magnifyingglass", description: Text("Its Git diff appears here."))
+                        } else {
+                            ScrollView {
+                                Text(diffText)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(10)
+                            }
                         }
                     }
-                }
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden)
-                .contextMenu(forSelectionType: GitChange.ID.self) { ids in
-                    if !ids.isEmpty {
-                        Button("Open") { ids.forEach { NSWorkspace.shared.open(fileURL(for: $0)) } }
-                        Button("Reveal in Finder") {
-                            NSWorkspace.shared.activateFileViewerSelecting(ids.map(fileURL(for:)))
-                        }
-                    }
-                } primaryAction: { ids in
-                    ids.forEach { NSWorkspace.shared.open(fileURL(for: $0)) }
+                    .frame(minHeight: 160)
                 }
             }
         }
         .task(id: [changeToken, AnyHashable(reloadToken)]) { await load() }
+        .task(id: selection.first) { await loadDiff() }
+        .onChange(of: requestedPath) { _, path in selectRequestedPath(path) }
     }
 
     private func load() async {
@@ -453,9 +479,34 @@ private struct ChangesView: View {
             repositoryRoot = root
             branch = currentBranch?.isEmpty == false ? currentBranch : nil
             changes = GitChange.parse(output)
+            selectRequestedPath(requestedPath)
             error = nil
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func selectRequestedPath(_ path: String?) {
+        guard let path, let change = changes?.first(where: { $0.path == path || $0.path.hasSuffix("/" + path) }) else { return }
+        selection = [change.id]
+    }
+
+    private func loadDiff() async {
+        guard let id = selection.first, let change = changes?.first(where: { $0.id == id }), let root = repositoryRoot else {
+            diffText = ""
+            diffError = nil
+            return
+        }
+        do {
+            var text = try await git.run(["-C", root, "diff", "--no-ext-diff", "HEAD", "--", change.path])
+            if text.isEmpty, FileManager.default.fileExists(atPath: URL(fileURLWithPath: root).appendingPathComponent(change.path).path) {
+                let contents = try String(contentsOf: URL(fileURLWithPath: root).appendingPathComponent(change.path), encoding: .utf8)
+                text = "--- /dev/null\n+++ b/\(change.path)\n" + contents.split(separator: "\n", omittingEmptySubsequences: false).map { "+\($0)" }.joined(separator: "\n")
+            }
+            diffText = text.isEmpty ? "No textual diff is available for this file." : text
+            diffError = nil
+        } catch {
+            diffError = error.localizedDescription
         }
     }
 

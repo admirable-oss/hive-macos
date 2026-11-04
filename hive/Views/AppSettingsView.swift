@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct AppSettingsView: View {
+    @State private var hiveURL: URL?
     @AppStorage("hive.appearance") private var appearance = "system"
     @AppStorage(AgentNotifier.effectiveStatesKey) private var notifyStates = "blocked, done"
     @AppStorage(AgentNotifier.systemNotificationsKey) private var systemNotifications = false
@@ -34,6 +35,14 @@ struct AppSettingsView: View {
                 Text("These values follow Hive’s effective [notify] settings in config.toml. Per-agent overrides can be set in [notify.agents]. The Dock badge always shows the blocked agent count.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Agent integrations") {
+                if let hiveURL {
+                    IntegrationHooksView(hiveURL: hiveURL)
+                } else {
+                    ProgressView("Finding Hive CLI…").task { hiveURL = await HiveInstallationService.locateInstalledHive() }
+                }
             }
         }
         .formStyle(.grouped)

@@ -4,6 +4,7 @@ import SwiftUI
 private enum SidebarItem: Hashable {
     case environment(String)
     case agent(String)
+    case machine(String)
 }
 struct HiveDashboardView: View {
     let hiveURL: URL
@@ -13,6 +14,7 @@ struct HiveDashboardView: View {
     @State private var searchText = ""
     @AppStorage("hive.desktop.environmentsExpanded") private var environmentsExpanded = true
     @AppStorage("hive.desktop.agentsExpanded") private var agentsExpanded = true
+    @AppStorage("hive.desktop.machinesExpanded") private var machinesExpanded = false
     @AppStorage("hive.desktop.inspector") private var inspectorPanel: InspectorPanel?
     @AppStorage("hive.desktop.lastInspector") private var lastInspectorPanel: InspectorPanel = .files
     @State private var showingCreateEnvironment = false
@@ -21,6 +23,12 @@ struct HiveDashboardView: View {
     @State private var environmentPendingRemoval: HiveEnvironment?
     @State private var showingAddMachine = false
     @State private var worktreeRepository: HiveEnvironment?
+    @State private var machineToRename: SavedHiveMachine?
+    @State private var machineToRemove: SavedHiveMachine?
+    @State private var machineRenameText = ""
+    @State private var showingTaskCenter = false
+    @State private var showingLayoutManager = false
+    @State private var requestedChangePath: String?
 
     init(hiveURL: URL) {
         self.hiveURL = hiveURL
@@ -78,8 +86,39 @@ struct HiveDashboardView: View {
         .sheet(item: $viewModel.inspectedMachine) { machine in
             MachineInspectorView(machine: machine, viewModel: viewModel)
         }
+        .sheet(isPresented: $showingTaskCenter) {
+            TaskCenterView(workspace: viewModel.workspace) { task, path in
+                guard let environmentID = task.environmentID ?? task.spec.environmentID else { return }
+                requestedChangePath = path
+                viewModel.openEnvironment(environmentID)
+                lastInspectorPanel = .changes
+                inspectorPanel = .changes
+            }
+        }
+        .sheet(isPresented: $showingLayoutManager) {
+            LayoutManagerView(workspace: viewModel.workspace)
+        }
+        .alert("Rename machine", isPresented: Binding(get: { machineToRename != nil }, set: { if !$0 { machineToRename = nil } })) {
+            TextField("Machine name", text: $machineRenameText)
+            Button("Cancel", role: .cancel) { machineToRename = nil }
+            Button("Rename") {
+                if let machineToRename { Task { await viewModel.renameMachine(machineToRename, to: machineRenameText.trimmingCharacters(in: .whitespacesAndNewlines)) } }
+                machineToRename = nil
+            }
+            .disabled(machineRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: { Text("Choose a new name for this saved machine.") }
+        .confirmationDialog("Remove saved machine?", isPresented: Binding(get: { machineToRemove != nil }, set: { if !$0 { machineToRemove = nil } }), titleVisibility: .visible) {
+            Button("Remove Machine", role: .destructive) {
+                if let machineToRemove { Task { await viewModel.removeMachine(machineToRemove) } }
+                machineToRemove = nil
+            }
+            Button("Cancel", role: .cancel) { machineToRemove = nil }
+        } message: { Text("This forgets the saved connection. Hive and its agents keep running on the remote machine.") }
         .task { viewModel.start() }
         .onChange(of: viewModel.activeTabID) { saveDirectories() }
+        .onChange(of: machinesExpanded) { _, expanded in
+            if expanded { for machine in viewModel.machines where machine.disabled != true { Task { await viewModel.refreshMachine(machine) } } }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             saveDirectories()
         }
@@ -171,6 +210,12 @@ struct HiveDashboardView: View {
                 inspectorToggle(.files)
                 inspectorToggle(.changes)
                 inspectorToggle(.agent)
+                Button { showingTaskCenter = true } label: { Label("Tasks", systemImage: "checklist") }
+                    .buttonStyle(ToolbarPillButtonStyle())
+                    .help("Tasks and plans")
+                Button { showingLayoutManager = true } label: { Label("Layouts", systemImage: "rectangle.3.group") }
+                    .buttonStyle(ToolbarPillButtonStyle())
+                    .help("Export or apply a workspace layout")
                 Button { viewModel.showingOverview.toggle() } label: {
                     Label("Overview", systemImage: "rectangle.grid.2x2")
                 }
@@ -209,6 +254,7 @@ struct HiveDashboardView: View {
                 panel: lastInspectorPanel,
                 directory: viewModel.activeEnvironment?.path ?? FileManager.default.homeDirectoryForCurrentUser.path,
                 changeToken: changeToken,
+                selectedChangePath: requestedChangePath,
                 viewModel: viewModel
             )
         }
@@ -277,6 +323,44 @@ struct HiveDashboardView: View {
                     }
                 } header: {
                     SidebarSectionHeader(title: "Agents", symbol: "sparkles", count: filteredAgents.count, showsDivider: true)
+                }
+
+                Section(isExpanded: $machinesExpanded) {
+                    ForEach(filteredMachines) { machine in
+                        VStack(alignment: .leading, spacing: 1) {
+                            MachineSidebarRow(machine: machine, status: viewModel.machineStatuses[machine.name], isRefreshing: viewModel.refreshingMachines.contains(machine.name))
+                            ForEach(viewModel.machineAgents[machine.name] ?? []) { agent in
+                                HStack(spacing: 7) {
+                                    StatusDot(color: agentStateColor(agent.state))
+                                    Text(agent.name.isEmpty ? agent.kind : agent.name).lineLimit(1)
+                                    Spacer(minLength: 2)
+                                    Text(agentStateTitle(agent.state)).font(.system(size: 10)).foregroundStyle(.secondary)
+                                }
+                                .font(.system(size: 11))
+                                .padding(.leading, 18)
+                                .selectionDisabled()
+                            }
+                        }
+                        .tag(SidebarItem.machine(machine.name))
+                        .contentShape(Rectangle())
+                        .onTapGesture { viewModel.inspectMachine(machine) }
+                        .contextMenu {
+                            Button("Inspect") { viewModel.inspectMachine(machine) }
+                            Button("Reconnect") { Task { await viewModel.reconnectMachine(machine) } }
+                                .disabled(machine.disabled == true)
+                            Button(machine.disabled == true ? "Enable" : "Disable") {
+                                Task { await viewModel.setMachine(machine, enabled: machine.disabled == true) }
+                            }
+                            Divider()
+                            Button("Rename…") { machineRenameText = machine.name; machineToRename = machine }
+                            Button("Remove…", role: .destructive) { machineToRemove = machine }
+                        }
+                    }
+                    if viewModel.machines.isEmpty {
+                        SidebarEmptyState(text: "No saved machines", actionTitle: "Add machine", action: { showingAddMachine = true })
+                    }
+                } header: {
+                    SidebarSectionHeader(title: "Machines", symbol: "server.rack", count: filteredMachines.count, showsDivider: true)
                 }
             }
             .listStyle(.sidebar)
@@ -474,6 +558,8 @@ struct HiveDashboardView: View {
                 switch item {
                 case .environment(let id): viewModel.openEnvironment(id)
                 case .agent(let id): viewModel.openAgent(id)
+                case .machine(let name):
+                    if let machine = viewModel.machines.first(where: { $0.name == name }) { viewModel.inspectMachine(machine) }
                 case nil: break
                 }
             }
@@ -517,6 +603,11 @@ struct HiveDashboardView: View {
             $0.kind.localizedCaseInsensitiveContains(searchText) ||
             $0.environmentID.localizedCaseInsensitiveContains(searchText)
         }
+    }
+
+    private var filteredMachines: [SavedHiveMachine] {
+        guard !searchText.isEmpty else { return viewModel.machines }
+        return viewModel.machines.filter { $0.name.localizedCaseInsensitiveContains(searchText) || $0.host.localizedCaseInsensitiveContains(searchText) }
     }
 }
 
@@ -693,6 +784,33 @@ private struct AgentSidebarRow: View {
     }
 }
 
+private struct MachineSidebarRow: View {
+    let machine: SavedHiveMachine
+    let status: HiveMachineStatus?
+    let isRefreshing: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            StatusDot(color: machine.disabled == true ? .secondary : (status?.reachable == true ? .green : (status == nil ? .secondary : .red)))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(machine.name).lineLimit(1)
+                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if isRefreshing { ProgressView().controlSize(.small) }
+            else if let count = status?.agents, count > 0 { Text("\(count)").font(.system(size: 11)).foregroundStyle(.secondary) }
+        }
+        .padding(.vertical, 2)
+        .help(machine.host)
+    }
+
+    private var detail: String {
+        if machine.disabled == true { return "Disabled" }
+        guard let status else { return "Not checked" }
+        return status.reachable ? (status.state.map { "Connected · \($0)" } ?? "Connected") : "Unavailable"
+    }
+}
+
 private struct StatusDot: View {
     let color: Color
     var isGlowing = false
@@ -714,7 +832,7 @@ private struct ActiveTerminalInspector: View {
     @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
-        WorkspaceInspectorView(panel: panel, directory: session.currentDirectory, changeToken: changeToken, viewModel: viewModel)
+        WorkspaceInspectorView(panel: panel, directory: session.currentDirectory, changeToken: changeToken, selectedChangePath: nil, viewModel: viewModel)
     }
 }
 

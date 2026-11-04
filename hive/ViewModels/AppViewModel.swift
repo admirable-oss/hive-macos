@@ -29,6 +29,9 @@ final class AppViewModel: ObservableObject {
     }
     @Published private(set) var sidebarError: String?
     @Published private(set) var machines: [SavedHiveMachine] = []
+    @Published private(set) var machineStatuses: [String: HiveMachineStatus] = [:]
+    @Published private(set) var machineAgents: [String: [HiveAgent]] = [:]
+    @Published private(set) var refreshingMachines: Set<String> = []
     @Published var inspectedMachine: SavedHiveMachine?
     @Published private(set) var machineStatus: HiveMachineStatus?
     @Published private(set) var checkingMachine = false
@@ -99,6 +102,60 @@ final class AppViewModel: ObservableObject {
               let data = output.data(using: .utf8),
               let machines = try? JSONDecoder().decode([SavedHiveMachine].self, from: data) else { return }
         self.machines = machines
+        for machine in machines where machine.disabled != true {
+            Task { await refreshMachine(machine) }
+        }
+    }
+
+    func refreshMachine(_ machine: SavedHiveMachine) async {
+        guard !refreshingMachines.contains(machine.name) else { return }
+        refreshingMachines.insert(machine.name)
+        defer { refreshingMachines.remove(machine.name) }
+        do {
+            let output = try await cli.run(["--json", "machine", "status", machine.name])
+            let statuses = try JSONDecoder().decode([HiveMachineStatus].self, from: Data(output.utf8))
+            guard let status = statuses.first else { return }
+            machineStatuses[machine.name] = status
+            if status.reachable {
+                let remoteOutput = try await cli.run(["--machine", machine.name, "--json", "agent", "list"])
+                machineAgents[machine.name] = (try? JSONDecoder().decode(HiveAgentList.self, from: Data(remoteOutput.utf8)).agents) ?? []
+            } else {
+                machineAgents[machine.name] = []
+            }
+        } catch {
+            machineStatuses[machine.name] = HiveMachineStatus(name: machine.name, reachable: false, error: error.localizedDescription, disabled: machine.disabled, agents: nil, state: nil, identity: nil, version: nil)
+            machineAgents[machine.name] = []
+        }
+    }
+
+    func reconnectMachine(_ machine: SavedHiveMachine) async {
+        do {
+            _ = try await cli.run(["machine", "reconnect", machine.name])
+            await refreshMachine(machine)
+        } catch { sidebarError = error.localizedDescription }
+    }
+
+    func setMachine(_ machine: SavedHiveMachine, enabled: Bool) async {
+        do {
+            _ = try await cli.run(["machine", enabled ? "enable" : "disable", machine.name])
+            await loadMachines()
+        } catch { sidebarError = error.localizedDescription }
+    }
+
+    func renameMachine(_ machine: SavedHiveMachine, to name: String) async {
+        do {
+            _ = try await cli.run(["machine", "rename", machine.name, name])
+            await loadMachines()
+        } catch { sidebarError = error.localizedDescription }
+    }
+
+    func removeMachine(_ machine: SavedHiveMachine) async {
+        do {
+            _ = try await cli.run(["machine", "remove", machine.name])
+            machineStatuses.removeValue(forKey: machine.name)
+            machineAgents.removeValue(forKey: machine.name)
+            await loadMachines()
+        } catch { sidebarError = error.localizedDescription }
     }
 
     func inspectMachine(_ machine: SavedHiveMachine) {

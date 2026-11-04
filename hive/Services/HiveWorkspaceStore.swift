@@ -271,6 +271,34 @@ final class HiveWorkspaceStore: ObservableObject {
         _ = try await call("agent.stop", ["id": id])
     }
 
+    func taskSummaries() async throws -> [HiveTaskSummary] {
+        try decode([HiveTaskSummary].self, from: try await call("task.list", [:]))
+    }
+
+    func taskPlan(_ id: String) async throws -> HiveTaskPlan {
+        try decode(HiveTaskPlan.self, from: try await call("task.get", ["id": id]))
+    }
+
+    func runTaskPlan(toml: String, source: String) async throws -> HiveTaskPlan {
+        let params = try JSONSerialization.data(withJSONObject: ["toml": toml, "source": source])
+        return try decode(HiveTaskPlan.self, from: try await callRaw("task.run", params))
+    }
+
+    func updateTask(_ method: String, planID: String, taskID: String, deny: Bool? = nil) async throws -> HiveTaskPlan {
+        var params: [String: Any] = ["id": planID, "task": taskID]
+        if let deny { params["deny"] = deny }
+        return try decode(HiveTaskPlan.self, from: try await call(method, params))
+    }
+
+    func exportLayout() async throws -> Data {
+        try await call("layout.export", ["environments": [String]()])
+    }
+
+    func applyLayout(_ data: Data) async throws {
+        _ = try await callRaw("layout.apply", data)
+        scheduleSnapshot()
+    }
+
     func resumeAgent(_ id: String) async throws -> HiveAgent {
         let started = try decode(HiveAgentStarted.self, from: try await call("agent.resume", ["id": id]))
         upsert(started.agent, into: &agents)
@@ -410,6 +438,11 @@ final class HiveWorkspaceStore: ObservableObject {
     private func call(_ method: String, _ params: [String: Any]) async throws -> Data {
         guard let client else { throw HiveSocketError.disconnected }
         return try await client.call(method, params: try JSONSerialization.data(withJSONObject: params))
+    }
+
+    private func callRaw(_ method: String, _ params: Data) async throws -> Data {
+        guard let client else { throw HiveSocketError.disconnected }
+        return try await client.call(method, params: params)
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {

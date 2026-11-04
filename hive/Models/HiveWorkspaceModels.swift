@@ -133,6 +133,68 @@ struct HiveAPISnapshot: Decodable {
     let agents: [HiveAgent]
 }
 
+struct HiveAgentList: Decodable {
+    let agents: [HiveAgent]
+}
+
+struct HiveTaskSummary: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String?
+    let state: String
+    let rev: UInt64
+    let total: Int
+}
+
+struct HiveTaskPlan: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String?
+    let state: String
+    let rev: UInt64
+    let tasks: [HiveTask]
+    let reason: String?
+}
+
+struct HiveTask: Decodable, Identifiable, Hashable {
+    let spec: HiveTaskSpec
+    let state: String
+    let attempt: Int?
+    let agentID: String?
+    let paneID: String?
+    let environmentID: String?
+    let path: String?
+    let reason: String?
+    let result: HiveTaskResult?
+
+    var id: String { spec.id }
+
+    enum CodingKeys: String, CodingKey {
+        case spec, state, attempt, reason, path, result
+        case agentID = "agent_id"
+        case paneID = "pane_id"
+        case environmentID = "environment_id"
+    }
+}
+
+struct HiveTaskSpec: Decodable, Hashable {
+    let id: String
+    let title: String?
+    let prompt: String?
+    let needs: [String]?
+    let environmentID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, prompt, needs
+        case environmentID = "environment_id"
+    }
+}
+
+struct HiveTaskResult: Decodable, Hashable {
+    let outcome: String
+    let summary: String?
+    let changed: [String]?
+    let screen: [String]?
+}
+
 struct HiveTerminalView: Decodable {
     let viewID: String
     let width: Int

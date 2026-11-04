@@ -177,7 +177,7 @@ The original plan:
 
 ### Phase 2: Agent workflows (P1)
 
-**In progress.**
+**Status: Complete (2026-11-04).**
 
 1. **Worktrees.** "New Worktree…" from an environment's right-click menu:
    - Pick a branch, create the worktree and its environment, and optionally start an agent in it.
@@ -192,6 +192,8 @@ The original plan:
 4. **Layouts.** Export the current workspace as a layout file, and apply one with a preview sheet.
 
 ### Phase 3: Remote machines (P1)
+
+**In progress.**
 
 1. **Machines in the sidebar.**
    - Each saved machine has its own section with connection status and its agents.
