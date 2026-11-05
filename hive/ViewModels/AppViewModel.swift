@@ -17,6 +17,22 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// A tab or pane whose name is being edited.
+    enum RenameTarget: Identifiable, Hashable {
+        case tab(WorkspaceTab.ID)
+        case pane(String)
+
+        var id: String {
+            switch self {
+            case .tab(let id): "tab-\(id)"
+            case .pane(let id): "pane-\(id)"
+            }
+        }
+    }
+
+    /// Whether switching tabs here moves Hive's active tab, so the TUI follows.
+    static let syncTabFocusKey = "hive.desktop.syncTabFocus"
+
     /// Hive's state, live from the daemon.
     let workspace: HiveWorkspaceStore
 
@@ -25,7 +41,10 @@ final class AppViewModel: ObservableObject {
         didSet { saveTabs() }
     }
     @Published var activeTabID: WorkspaceTab.ID? {
-        didSet { saveTabs() }
+        didSet {
+            saveTabs()
+            if activeTabID != oldValue { syncTabFocus() }
+        }
     }
     @Published private(set) var sidebarError: String?
     @Published private(set) var versionMismatch: String?
@@ -43,6 +62,16 @@ final class AppViewModel: ObservableObject {
     @Published var showingQuickOpen = false
     @Published var showingOverview = false
     @Published var showingInbox = false
+    @Published var renaming: RenameTarget?
+    /// A pane on its way to a new place in its own tab; its tab keeps showing it meanwhile.
+    @Published private(set) var rearrangingPaneID: String?
+    @Published var showingShortcuts = false
+    @Published var showingRunInPopup = false
+    /// `[[keys.command]]` from config.toml: commands bound to keys in the TUI.
+    @Published private(set) var customCommands: [HiveKeyCommand] = []
+    /// The last line a background command printed, shown briefly.
+    @Published private(set) var commandStatus: String?
+    private var commandStatusTask: Task<Void, Never>?
 
     /// Mirrors Hive's agent-state changes, for the command center's activity log.
     var onAgentChange: ((HiveAgent?, HiveAgent) -> Void)?
@@ -108,6 +137,7 @@ final class AppViewModel: ObservableObject {
             let data = Data(try await cli.run(["--json", "config", "show"]).utf8)
             let config = try JSONDecoder().decode(HiveConfigDocument.self, from: data)
             notifier.apply(config.notify)
+            customCommands = (config.keys?.command ?? []).filter(\.isSupported)
         } catch {
             // Keep Hive's documented defaults until a valid config is available.
         }
@@ -268,9 +298,15 @@ final class AppViewModel: ObservableObject {
     /// The pane keystrokes go to in the active tab.
     var focusedPaneID: String? {
         guard let tab = activeHiveTab else { return nil }
-        let panes = tab.paneIDs
+        let panes = tab.paneIDs + tab.popupPaneIDs
         // A focus that names a pane already closed falls back to one still on screen.
-        return [tab.zoomed, tab.focused].compactMap { $0 }.first(where: panes.contains) ?? panes.first
+        return [tab.focused, tab.zoomed].compactMap { $0 }.first(where: panes.contains) ?? tab.popupPaneIDs.last ?? panes.first
+    }
+
+    /// Whether the focused pane floats over the tab rather than sitting in its layout.
+    var focusedPaneIsPopup: Bool {
+        guard let id = focusedPaneID else { return false }
+        return activeHiveTab?.popupPaneIDs.contains(id) ?? false
     }
 
     /// The most panes one tab splits into; past that, terminals get too small to use.
@@ -539,7 +575,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleZoom() {
-        guard let paneID = focusedPaneID else { return }
+        guard let paneID = focusedPaneID, !focusedPaneIsPopup else { return }
         toggleZoom(paneID)
     }
 
@@ -566,6 +602,207 @@ final class AppViewModel: ObservableObject {
 
     func closePane(_ paneID: String) async {
         await perform { try await self.workspace.closePane(paneID) }
+    }
+
+    // MARK: Names
+
+    /// The name a rename starts from.
+    func currentName(of target: RenameTarget) -> String {
+        switch target {
+        case .tab(let id):
+            guard let tab = tabs.first(where: { $0.id == id }) else { return "" }
+            return tab.hiveTabID.flatMap(workspace.tab)?.name ?? tab.name ?? ""
+        case .pane(let id):
+            return workspace.panes[id]?.name ?? ""
+        }
+    }
+
+    func rename(_ target: RenameTarget, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch target {
+        case .tab(let id):
+            guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+            if let hiveTabID = tabs[index].hiveTabID {
+                renameHiveTab(hiveTabID, to: name)
+            } else {
+                tabs[index].name = name.isEmpty ? nil : name
+            }
+        case .pane(let id):
+            guard !name.isEmpty else { return }
+            Task { await perform { try await self.workspace.renamePane(id, to: name) } }
+        }
+    }
+
+    func renameActiveTab() {
+        if let id = activeTabID { renaming = .tab(id) }
+    }
+
+    func renameFocusedPane() {
+        if let id = focusedPaneID { renaming = .pane(id) }
+    }
+
+    // MARK: Arranging panes
+
+    /// Swaps the focused pane with the one after it (or before it) in the tab, as tmux's `{` and `}` do.
+    func swapFocusedPane(forward: Bool) {
+        guard let tab = activeHiveTab, let id = focusedPaneID else { return }
+        let panes = tab.paneIDs
+        guard panes.count > 1, let index = panes.firstIndex(of: id) else { return }
+        swapPanes(id, with: panes[(index + (forward ? 1 : -1) + panes.count) % panes.count])
+    }
+
+    func swapPanes(_ id: String, with other: String) {
+        guard id != other else { return }
+        Task { await perform { try await self.workspace.swapPanes(id, with: other) } }
+    }
+
+    /// Hive tabs a pane can move into: any other tab with room for one more pane.
+    func moveDestinations(for paneID: String) -> [HiveTab] {
+        let home = workspace.panes[paneID]?.tabID
+        return workspace.tabs.filter { $0.id != home && $0.paneIDs.count < Self.maxPanesPerTab }
+    }
+
+    /// Moves a pane beside `target` (or the destination's focused pane), then shows it there.
+    func movePane(_ id: String, toTab tabID: String, nextTo target: String? = nil, direction: String = "right") {
+        if workspace.panes[id]?.tabID == tabID {
+            guard let target, rearrangingPaneID == nil else { return }
+            rearrangingPaneID = id
+            Task {
+                await perform { try await self.workspace.rearrangePane(id, nextTo: target, direction: direction) }
+                rearrangingPaneID = nil
+            }
+            return
+        }
+        if let destination = workspace.tab(tabID), destination.id != workspace.panes[id]?.tabID,
+           destination.paneIDs.count >= Self.maxPanesPerTab {
+            return NSSound.beep()
+        }
+        Task {
+            await perform {
+                let pane = try await self.workspace.movePane(id, toTab: tabID, nextTo: target, direction: direction)
+                self.openHiveTab(pane.tabID)
+            }
+        }
+    }
+
+    /// Moves a pane into a new tab of an environment, its own when `environmentID` is nil.
+    func movePaneToNewTab(_ id: String, environmentID: String? = nil) {
+        guard let environment = environmentID ?? workspace.panes[id]?.environmentID else { return }
+        Task {
+            await perform {
+                let pane = try await self.workspace.movePane(id, environmentID: environment)
+                self.openHiveTab(pane.tabID)
+            }
+        }
+    }
+
+    /// The TUI's effective key bindings (`hive config keys`), as action → how you press it,
+    /// e.g. `rename-tab` → `⌃B ,`. Shown beside the desktop shortcuts.
+    func tuiKeyBindings() async -> [String: String] {
+        struct Document: Decodable {
+            struct Binding: Decodable { let mode: String; let action: String; let keys: [String] }
+            let prefix: [String]
+            let bindings: [Binding]
+        }
+        guard let output = try? await cli.run(["--json", "config", "keys"]),
+              let document = try? JSONDecoder().decode(Document.self, from: Data(output.utf8)) else { return [:] }
+        let prefix = document.prefix.first.map(Self.displayKey) ?? "⌃B"
+        var result: [String: String] = [:]
+        for binding in document.bindings where result[binding.action] == nil {
+            guard let key = binding.keys.first else { continue }
+            switch binding.mode {
+            case "prefix": result[binding.action] = "\(prefix) \(Self.displayKey(key))"
+            case "terminal": result[binding.action] = Self.displayKey(key)
+            default: break
+            }
+        }
+        return result
+    }
+
+    private static func displayKey(_ key: String) -> String {
+        let names = ["ctrl": "⌃", "alt": "⌥", "shift": "⇧", "cmd": "⌘", "space": "Space", "esc": "Esc", "enter": "↩",
+                     "left": "←", "right": "→", "up": "↑", "down": "↓", "tab": "⇥"]
+        let parts = key.split(separator: "+").map(String.init)
+        // `o` and `O` are different keys, so case stays, except after a modifier (⌃B, not ⌃b).
+        return parts.enumerated().map { index, part in
+            names[part] ?? (index > 0 && part.count == 1 ? part.uppercased() : part)
+        }.joined()
+    }
+
+    // MARK: Popups and commands
+
+    /// Opens a floating pane over the active tab: a shell, or `command` run by the user's shell.
+    func openPopup(command: String? = nil, name: String? = nil) {
+        guard let tab = activeHiveTab else { return NSSound.beep() }
+        let argv = command.map(Self.shellCommand)
+        Task { await perform { _ = try await self.workspace.openPopup(inTab: tab.id, command: argv, name: name) } }
+    }
+
+    func run(_ command: HiveKeyCommand) {
+        switch command.type {
+        case "popup":
+            openPopup(command: command.command, name: command.title)
+        case "pane":
+            guard let paneID = focusedPaneID, !focusedPaneIsPopup else { return NSSound.beep() }
+            guard canSplit(paneID) else { return NSSound.beep() }
+            let argv = Self.shellCommand(command.command ?? "")
+            Task { await perform { try await self.workspace.splitPane(paneID, direction: "right", command: argv) } }
+        case "shell":
+            runInBackground(command)
+        default:
+            NSSound.beep()
+        }
+    }
+
+    /// A `shell` command runs out of sight in the active environment; its last line shows briefly.
+    private func runInBackground(_ command: HiveKeyCommand) {
+        let directory = activeEnvironment?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let argv = Self.shellCommand(command.command ?? "")
+        showCommandStatus("\(command.title) …")
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: argv[0])
+            process.arguments = Array(argv.dropFirst())
+            process.currentDirectoryURL = URL(fileURLWithPath: directory)
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            var line: String
+            do {
+                try process.run()
+                let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                process.waitUntilExit()
+                line = output.split(whereSeparator: \.isNewline).last.map(String.init) ?? ""
+                if line.isEmpty { line = process.terminationStatus == 0 ? "Done" : "Exited with code \(process.terminationStatus)" }
+            } catch {
+                line = error.localizedDescription
+            }
+            await MainActor.run { [line] in self.showCommandStatus("\(command.title): \(line)") }
+        }
+    }
+
+    private func showCommandStatus(_ text: String) {
+        commandStatus = text
+        commandStatusTask?.cancel()
+        commandStatusTask = Task {
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            commandStatus = nil
+        }
+    }
+
+    /// Runs a command line the way the user's own shell would, with their PATH.
+    private static func shellCommand(_ line: String) -> [String] {
+        let shell = ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
+        return [shell, "-lc", line]
+    }
+
+    /// Tells Hive which tab is in front here, so the TUI and other clients follow it.
+    private func syncTabFocus() {
+        guard UserDefaults.standard.object(forKey: Self.syncTabFocusKey) as? Bool ?? true,
+              let hiveTabID = activeTab?.hiveTabID,
+              let tab = workspace.tab(hiveTabID), tab.active != true else { return }
+        Task { try? await workspace.focusTab(hiveTabID) }
     }
 
     /// Remembers where each scratch shell is, so a relaunch reopens it in the same folder.

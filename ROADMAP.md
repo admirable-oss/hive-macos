@@ -24,9 +24,16 @@ clear path from parallel work to reviewed changes.
 | M5 Settings, Sessions & Upkeep | `v0.5` | ✅ Live |
 | M6 Review Cockpit & Changes | `v0.6` | ✅ Live |
 | M7 Personal Command Center | `v0.7` | ✅ Live |
-| M8 macOS Automation & Handoff | `v0.8` | Proposed |
-| M9 Extensibility & Plugin Surfaces | `v0.9` | Proposed |
-| M10 Desktop 1.0 & Trusted Distribution | `v1.0` | Proposed |
+| M8 Parity: Workspace Control | `v0.8` | 🟡 In progress (6 of 7) |
+| M9 Parity: Environments, Processes & Agents | `v0.9` | Proposed |
+| M10 Parity: Web, Runtime & Onboarding | `v0.10` | Proposed |
+| M11 macOS Automation & Handoff | `v0.11` | Proposed |
+| M12 Extensibility & Plugin Surfaces | `v0.12` | Skipped for now |
+| M13 Desktop 1.0 & Trusted Distribution | `v1.0` | Proposed |
+
+M8–M10 come from the [parity audit of 2026-11-05](#parity-audit--2026-11-05), which compared the app with
+`hive` 1.3.0-rc.3 (API level 12). They close the gaps between the desktop and the CLI/TUI before the
+macOS-only work in M11.
 
 Legend: ✅ shipped · 🟡 partial · ❌ missing — Priority **P0** (highest) → **P2** (later) — Size **S / M / L**
 
@@ -200,7 +207,155 @@ executable extension.
 
 ---
 
-## M8 · macOS Automation & Handoff — `v0.8` — **PROPOSED**
+## 🟡 M8 · Parity: Workspace Control — `v0.8` — **IN PROGRESS**
+
+Everything you can do to tabs and panes in the TUI, you can do in the app, and you can find it in a
+menu.
+
+**Status (2026-11-05):** items 1–6 are built; item 7 (run, send and wait in panes) is next. Item
+headings carry ✅ when done.
+
+**Notes from building it**
+
+- Hive refuses `pane.move` within a pane's own tab ("use swap"). Dropping a pane on another pane's
+  edge in the same tab therefore moves it through a stopover tab and straight back. The stopover
+  closes itself once empty, and the app keeps the pane on screen meanwhile, so it glides into place.
+- Popups aren't in a tab's layout. They come in the tab's `popups` list (`pane`, `width_pct`,
+  `height_pct`), and Hive focuses a new popup.
+
+1. ✅ **Rename tabs and panes (P0, S).** `HiveWorkspaceStore.renameTab` and `renamePane` exist but
+   nothing calls them.
+   - Double-click a tab pill, or right-click → *Rename Tab…*, edits the name inline (`tab.rename`).
+   - Pane right-click menu → *Rename Pane…* (`pane.rename`).
+   - Tab pills show the tab's name, with its number as the ⌘1–9 hint, instead of only `>_ 1`.
+   - A split pane shows its name in a slim title strip when it has one.
+2. ✅ **Real menus for tabs and panes (P0, S).** Today the shortcuts are hidden buttons, so they can't
+   be found or remapped in System Settings. Add *Tab* and *Pane* menus to the menu bar that cover:
+   - **Tab:** New Tab ⌘T, Rename Tab ⇧⌘R, Next/Previous Tab ⌃⇥/⌃⇧⇥ (⌃⇧←/→ still work), Go to Tab
+     ⌘1–9, Close Tab ⇧⌘W;
+   - **Pane:** Split ⌘D/⇧⌘D, Zoom ⇧⌘M, Move Focus ⌥⌘←↑→↓, Swap With Next/Previous ⌃⌘]/⌃⌘[,
+     Move to New Tab, Rename Pane ⌥⌘R, Open Popup Shell ⌥⌘P, Run in Popup ⌥⇧⌘P, Close Pane ⌘W;
+   - **View:** Go to Agent or Pane ⌘K, Overview ⇧⌘O and Inbox ⇧⌘I.
+
+   Add *Help → Keyboard Shortcuts* (⌘/) with a sheet that lists every binding, the desktop's
+   `prefix ?`. Beside each one it shows the TUI key, read live from `hive config keys`.
+3. ✅ **Sync the active tab with Hive (P1, S).** Switching tabs in the app calls `tab.focus`, so the
+   TUI and other clients follow. A setting turns this off for people who run the app and the TUI
+   side by side.
+4. ✅ **Swap and move panes (P1, M).**
+   - Drag a pane's title strip onto another pane to swap them (`pane.swap`).
+   - Drop it on the edge of a pane to move it there (`pane.move` with `target` and `direction`).
+   - *Move to Tab ▸* and *Move to New Tab* in the pane menu (`pane.move` with `tab_id`).
+   - *Move to Environment ▸* re-homes a pane (`environment_id`).
+   - Panes glide to their new places with the existing layout animation.
+5. ✅ **Popups (P1, M).** Run a command in a floating pane over the tab (`pane.popup` with `spec`,
+   `width_pct` and `height_pct`), the TUI's popup for tools like `lazygit`. It is a centered, rounded
+   overlay that closes with Esc or when its command exits, and it never resizes the panes beneath it.
+6. ✅ **Your own commands (P2, M).** Read `[[keys.command]]` from `config.toml` and list the `popup`,
+   `pane` and `shell` entries in a *Commands* menu, each with its key as a ⌃⌥ shortcut. A `shell`
+   command runs in the background and shows its last line in the status area. `plugin_action`
+   entries wait for M12.
+7. **Run and send to panes (P2, S).**
+   - *Run Command…* types a command into a pane and runs it (`pane.run`).
+   - *Send Text to Panes…* sends one input to several selected panes (`pane.send_text`, with
+     `paste` for multi-line text): the desktop take on synchronized panes.
+   - *Wait for Output* notifies when a pane prints a pattern (`pane.wait_output`), useful for "tell
+     me when the dev server is ready".
+
+**✅ Acceptance:** with the TUI attached to the same session, every tab and pane action in the TUI has
+a menu item in the app with a shortcut. Renames, swaps, moves, popups and tab focus show up in both
+at once.
+
+---
+
+## M9 · Parity: Environments, Processes & Agents — `v0.9` — **PROPOSED**
+
+The environment and agent commands of the CLI, without leaving the app.
+
+1. **Environment settings (P1, M).** An *Environment Settings…* sheet from the sidebar:
+   - rename it and edit its fields (`environment.update` with `set` and `unset`);
+   - edit the variables every new process gets (`hive environment set/unset KEY=VALUE`), with values
+     masked by default and a warning that running processes keep their old values.
+2. **Processes and logs (P1, L).** Hive runs more than agents, and the app shows none of it.
+   - A *Processes* section per environment (`process.list`), kept live from the `process.started`,
+     `process.exited` and `process.recovered` events the store already decodes.
+   - *Start Process…* starts a command with or without a terminal, for dev servers and watchers
+     (`process.start`).
+   - A logs viewer with follow, stdout/stderr filters and search (`process.logs` with `follow`,
+     `stream` and `tail`, or `process.logs.stream`).
+   - Stop and restart (`process.stop`).
+   - Link each process to the ports it listens on, so *Kill Ports* names the process it stops.
+3. **Titles and tokens (P1, M).** The roadmap listed these as shipped, but the app never reads
+   them.
+   - Read `metadata.list` and follow its updates.
+   - Show pane titles and tokens (branch, PR, test status, cost) as chips on pane title strips, tab
+     pills and sidebar environments, the way the TUI's status line does.
+   - `metadata.report` lets the app clear stale tokens.
+4. **Agent tools (P1, M).**
+   - *Rename Agent…* (`agent.rename`).
+   - *Transcript* in the agent inspector: the agent's recent output as text, with copy and save
+     (`agent.read` with `lines` and `source`).
+   - *Notify me when…* done, idle, blocked or stalled for N minutes, for one agent
+     (`agent.wait` with `until` and `stall_ms`).
+   - *Show in TUI* (`agent.focus`).
+   - *Mark as…* sets an agent's state by hand when its hooks aren't installed (`agent.report`).
+5. **Worktree lifecycle (P1, M).** Today the app only creates worktrees, and removing their
+   environment leaves the checkout on disk.
+   - List a repository's worktrees, including ones without an environment (`worktree.list`).
+   - Open an existing checkout as an environment (`worktree.open`).
+   - *Remove Worktree…* shows uncommitted changes before deleting the checkout, and offers `force`
+     (`worktree.remove`).
+
+**✅ Acceptance:** you can set an environment's variables, run and watch a dev server's logs, see
+every pane's tokens, read an agent's transcript, get notified when an agent stalls, and remove a
+worktree cleanly — all without the CLI.
+
+---
+
+## M10 · Parity: Web, Runtime & Onboarding — `v0.10` — **PROPOSED**
+
+The rest of the CLI surface: sharing, diagnostics and getting started.
+
+1. **Web observer, fully (P1, M).** The app reads `hive web status` and nothing else.
+   - *Share…* creates a one-time sign-in link with a QR code (`web share`). It sets uses, link
+     expiry and access expiry, and whether screens and history are shown.
+   - A *Grants* list shows who has access and when it ends, with revoke (`web grants`,
+     `web revoke`).
+   - Start and stop the observer (`web serve`, `web runtime`).
+   - Manage phone and browser notifications (`web push`).
+   - A live activity feed (`observer.activity`) and a token checker (`observer.validate`).
+2. **Ad-hoc remote hosts (P2, M).** *Connect to Host…* runs against any SSH host without saving it
+   first (`--remote host`). When Hive is missing there, a consent sheet says what will be installed
+   before it runs with `--yes`. A *Save as Machine* button turns it into a saved machine.
+3. **Sessions in the window (P2, S).**
+   - A session switcher in the sidebar footer, instead of only in Settings.
+   - `session remove` and `session stop`, with a confirmation that names the agents that stop.
+4. **Diagnostics (P2, M).**
+   - Native runtime status and ping in the connection indicator (`runtime.status`, `runtime.ping`),
+     replacing the CLI round trips.
+   - A *Diagnostics* window showing memory, goroutines and per-process resource use
+     (`debug.stats`).
+   - *Capture Profile…* saves a `pprof` bundle for bug reports (`debug.pprof`).
+   - The app reports its round-trip time (`client.report`) so the runtime can size frame and image
+     budgets for remote terminals.
+5. **Terminal fidelity (P2, M).**
+   - Show inline images that agents draw with the kitty or sixel protocols (`terminal.graphics`).
+   - Replay a restored pane's history from `terminal.snapshot` with `scrollback`, which finishes the
+     🟡 history-replay item.
+   - *Copy Screen* and *Save Scrollback…* in the pane menu.
+6. **Getting started (P2, S).**
+   - *Try the Demo* in onboarding and the empty state opens four demo agents (`hive demo`).
+   - *Connect Agents to Hive* in Settings → Integrations:
+     - shows and installs the MCP server entry (`hive mcp`) for Claude Code, Codex and OpenCode;
+     - installs Hive's skill (`hive --skill`) where those agents read skills.
+
+**✅ Acceptance:** you can share a read-only link to your agents and revoke it, run against an unsaved
+SSH host with explicit consent, diagnose a slow runtime and attach a profile to a bug report, and a
+new user can try Hive and connect their agents to its MCP server from the app.
+
+---
+
+## M11 · macOS Automation & Handoff — `v0.11` — **PROPOSED**
 
 Meet people where they already work: Shortcuts, Spotlight, Finder and their editor.
 
@@ -218,12 +373,15 @@ agent or pane, and open a changed file at the right line in their editor.
 
 ---
 
-## M9 · Extensibility & Plugin Surfaces — `v0.9` — **PROPOSED**
+## M12 · Extensibility & Plugin Surfaces — `v0.12` — **SKIPPED FOR NOW**
 
 The layer that makes Hive customizable while keeping permissions legible.
 
 > Skipped per user request (2026-11-04). Executable extensions stay out of scope until a separate
-> permission and maintenance model is designed.
+> permission and maintenance model is designed. This is the largest remaining gap with the CLI:
+> `hive plugin` has 30 subcommands (install, search, update, rollback, grant, revoke, doctor, logs,
+> config, …) and the API has 12 `plugin.*` methods. The app uses none of them. The `[plugins]`
+> policy section is editable in Settings.
 
 1. **Plugin palette ⌘⇧P (P1, M).** Runs plugin actions and palette entries; async actions show
    progress.
@@ -241,7 +399,7 @@ capability consent.
 
 ---
 
-## M10 · Desktop 1.0 & Trusted Distribution — `v1.0` — **PROPOSED**
+## M13 · Desktop 1.0 & Trusted Distribution — `v1.0` — **PROPOSED**
 
 The app leaves preview and becomes something to install without a second thought.
 
@@ -259,7 +417,8 @@ The app leaves preview and becomes something to install without a second thought
    Decide before shipping 1.0.
 
 **✅ Acceptance:** a signed app installs and updates itself only to verified releases, rolls back a
-failed update, and meets the latency, CPU and memory budgets — with M1–M8's acceptance still holding.
+failed update, and meets the latency, CPU and memory budgets — with the acceptance of M1–M11 still
+holding.
 
 ---
 
@@ -273,12 +432,16 @@ failed update, and meets the latency, CPU and memory budgets — with M1–M8's 
 | Create environments and worktrees | ✅ | Folder drop, existing folders, and Hive-managed worktrees |
 | Start / stop / resume agents; approve blocked agents | ✅ | Sidebar, inspector, notifications, and menu bar |
 | Remove environment (with confirmation) | ✅ | |
-| Hive terminal tabs and split panes | ✅ | Shared with the TUI; local scratch shells remain available |
+| Hive terminal tabs and split panes | ✅ | Shared with the TUI, up to 4 panes per tab: rename, swap, move, popups, right-click menu |
 | Files panel following the shell's `cd`, Quick Look previews | ✅ | Desktop only |
-| Changes panel with inline diffs | 🟡 | Staged and unstaged diffs, including new text files; staging and commits remain |
+| Changes panel: diffs, staging, commits | ✅ | Stage or unstage files and hunks, commit with a review step |
 | Kill listening ports per environment | ✅ | Desktop only |
 | Remote machines and observers | ✅ | Pairing, status, remote terminals, and observer credentials |
 | Settings and runtime upkeep | ✅ | Validated config editing, sessions, updates, daemon controls, and GC |
+| Environment variables and settings | ❌ | M9 |
+| Background processes and logs | ❌ | M9 |
+| Web observer sharing and grants | ❌ | Status only; M10 |
+| Plugins | ❌ | M12, skipped for now |
 | Menu bar, actionable notifications, Dock badge, drag and drop | ✅ | Native desktop integrations |
 
 ---
@@ -294,9 +457,13 @@ failed update, and meets the latency, CPU and memory budgets — with M1–M8's 
 | Move focus, resize panes, drag borders | ✅ | P0 | M |
 | Zoom and close panes | ✅ | P0 | S |
 | Jump to tab 1–9, next/previous tab | ✅ | P0 | S |
-| Rename tabs and panes, pane titles and tokens (`metadata`) | ✅ | P1 | S |
-| Popups (`pane popup`), floating panes | ❌ | P2 | M |
-| Move a pane to another tab or environment, swap panes | 🟡 | P2 | M |
+| Rename tabs and panes (`tab rename`, `pane rename`) | ✅ M8 | P0 | S |
+| Pane and environment titles and tokens (`metadata`) | ❌ M9 | P1 | M |
+| Popups (`pane popup`), floating panes | ✅ M8 | P1 | M |
+| Move a pane to another tab or environment, swap panes (`pane move`, `pane swap`) | ✅ M8 | P1 | M |
+| Active tab follows between clients (`tab focus`) | ✅ M8 | P1 | S |
+| Your own commands on keys (`[[keys.command]]`: popup, pane, shell) | ✅ M8 | P2 | M |
+| Run or send text into panes, wait for output (`pane run`, `send-text`, `wait-output`) | ❌ M8 | P2 | S |
 | Layout export / apply (JSON) | ✅ | P1 | M |
 | Overview (`Ctrl+B O`) | ✅ | P1 | M |
 | Find an agent or pane (`Ctrl+B w`) | ✅ | P0 | S |
@@ -313,15 +480,28 @@ failed update, and meets the latency, CPU and memory budgets — with M1–M8's 
 | Send keys (approve / deny a blocked agent: `y`, Enter, Esc) | ✅ | P0 | S |
 | Install agent hooks for precise state and resume (`integration install`) | ✅ | P1 | S |
 | Resume a conversation (session ID or latest) | ✅ | P1 | S |
-| Rename an agent's pane | ✅ | P2 | S |
+| Rename an agent (`agent rename`) | ❌ M9 | P2 | S |
+| Read an agent's output as text (`agent read`) | ❌ M9 | P1 | S |
+| Wait for a state or a stall (`agent wait --until`, `stall_ms`) | 🟡 M9 | P1 | S |
+| Report a state by hand (`agent report`), focus in the TUI (`agent focus`) | ❌ M9 | P2 | S |
 | Paste or drop an image into an agent | ✅ | P0 | M |
 | Agent manifests (which CLIs Hive knows) | ✅ | P2 | S |
+
+### Environments and processes
+
+| TUI / runtime feature | Desktop | Priority | Size |
+| --- | --- | --- | --- |
+| Create and remove environments | ✅ | P0 | S |
+| Edit an environment, set and unset its variables (`environment update/set/unset`) | ❌ M9 | P1 | M |
+| List, start and stop processes (`process list/start/stop`) | ❌ M9 | P1 | M |
+| Process logs, following (`process logs --follow`) | ❌ M9 | P1 | M |
 
 ### Worktrees and tasks
 
 | TUI / runtime feature | Desktop | Priority | Size |
 | --- | --- | --- | --- |
-| Worktree create / list / open / remove (an agent per branch) | ✅ | P1 | M |
+| Worktree create (an agent per branch) | ✅ | P1 | M |
+| Worktree list / open / remove (`worktree list/open/remove`) | ❌ M9 | P1 | M |
 | Tasks: run a plan, approve, cancel, retry, wait, report | ✅ | P1 | L |
 | Plan report: per-task outcome, changed files, summary | ✅ | P1 | M |
 
@@ -333,7 +513,8 @@ failed update, and meets the latency, CPU and memory budgets — with M1–M8's 
 | Restore desktop tabs on relaunch | ✅ | — | — |
 | Session save / restore / restore `--fresh` | ✅ | P2 | S |
 | Several sessions (separate daemons) | ✅ | P2 | M |
-| History replay after restore (`session.replay_history`) | 🟡 | P2 | S |
+| History replay after restore (`session.replay_history`) | 🟡 M10 | P2 | S |
+| Remove or stop a session (`session remove/stop`) | ❌ M10 | P2 | S |
 | Garbage collection (`gc`, `--dry-run`) | ✅ | P2 | S |
 
 ### Remote machines
@@ -344,7 +525,19 @@ failed update, and meets the latency, CPU and memory budgets — with M1–M8's 
 | Machine status / reconnect / enable / disable / rename / remove | ✅ | P1 | S |
 | Discover runtimes on the local network, pair, revoke | ✅ | P1 | M |
 | Create remote environments, run agents, attach terminals, SSH shell | ✅ | P1 | M |
-| Observer credentials (create, revoke, audit), web observer | ✅ | P2 | M |
+| Observer credentials (create, revoke, audit) | ✅ | P2 | M |
+| Web observer: share links, grants, serve, Web Push (`web share/grants/revoke/serve/push`) | ❌ M10 | P1 | M |
+| Ad-hoc SSH hosts without saving them (`--remote host`) | ❌ M10 | P2 | M |
+
+### Runtime and onboarding
+
+| TUI / runtime feature | Desktop | Priority | Size |
+| --- | --- | --- | --- |
+| Status, ping, start/stop the daemon, update, `gc` | ✅ through the CLI; native in M10 | P1 | S |
+| Resource use and profiles (`debug stats`, `debug pprof`) | ❌ M10 | P2 | M |
+| Inline terminal graphics (`terminal.graphics`) | ❌ M10 | P2 | M |
+| Demo tab (`hive demo`) | ❌ M10 | P2 | S |
+| MCP server setup (`hive mcp`) and the agent skill (`hive --skill`) | ❌ M10 | P2 | S |
 
 ### Extensibility
 
@@ -381,19 +574,19 @@ These use macOS to make Hive easier to supervise and control. Statuses reflect t
    connected after the main window closes.
 2. **Actionable notifications and Dock badge (P0, M). Complete.** Approve or deny a blocked agent
    without leaving the app you're in.
-3. **Changes panel diffs (P1, M). Partial.** Readable inline diffs cover staged, unstaged and
-   untracked text changes. Next: stage or unstage files and hunks, then commit with a clear review
-   step. Quick Look covers new files.
+3. **Changes panel (P1, M). Complete.** Readable inline diffs cover staged, unstaged and untracked
+   text changes; stage or unstage files and hunks, then commit with a review step. Quick Look covers
+   new files.
 4. **Drag and drop (P1, S). Complete.** Drop a folder on the sidebar to create an environment, files
    into a terminal to type their paths, a plan file to run it, and an image on an agent to paste it.
-5. **Shortcuts and App Intents (P1, M). Next.** Works from Spotlight, Siri and the Shortcuts app.
-6. **Finder integration (P2, S). Next.** A Services menu or Finder extension item, "Open in Hive" /
+5. **Shortcuts and App Intents (P1, M). M11.** Works from Spotlight, Siri and the Shortcuts app.
+6. **Finder integration (P2, S). M11.** A Services menu or Finder extension item, "Open in Hive" /
    "New Hive Environment Here", and a `hive://` URL scheme for deep links to agents and panes.
-7. **Open in editor (P2, S). Next.** From Files and Changes, open in the user's editor (VS Code,
+7. **Open in editor (P2, S). M11.** From Files and Changes, open in the user's editor (VS Code,
    Cursor, Xcode, Zed) at the right line.
-8. **Terminal polish (P1, S). Partial.** Hive theme colours and Nerd Font fallback are in place.
-   Next: ⌘F find in scrollback, ⌘-click to open links and file paths, and secure keyboard entry.
-9. **Focus filters (P2, S). Next.** Mute notifications from chosen environments during a Focus mode.
+8. **Terminal polish (P1, S). Complete.** Hive theme colours, Nerd Font fallback, ⌘F find in
+   scrollback, ⌘-click to open links and file paths, secure keyboard entry, and a right-click menu.
+9. **Focus filters (P2, S). M11.** Mute notifications from chosen environments during a Focus mode.
 
 ---
 
@@ -414,30 +607,88 @@ core also emphasizes durable terminals and agents that can start, steer, wait fo
 agents. [Herdr core](https://herdr.dev/core/).
 
 The opportunity is to make Hive feel customizable while keeping its permissions legible: start with
-editable, declarative layouts and views, and keep executable extensions out of scope while M9
+editable, declarative layouts and views, and keep executable extensions out of scope while M12
 remains skipped.
 
 ---
 
 ## Keyboard map (desktop equivalents)
 
-| Action | TUI | Desktop |
+The *Today* column is what the app binds now; M8 adds the missing ones and puts every binding in a
+menu.
+
+| Action | TUI | Desktop | Today |
+| --- | --- | --- | --- |
+| New tab | `Ctrl+B c` | ⌘T | ✅ |
+| Split right / down | `Ctrl+B %` / `"` | ⌘D / ⇧⌘D | ✅ |
+| Move between panes | `Ctrl+B ←↑→↓` | ⌥⌘←↑→↓ | ✅ |
+| Next / previous tab | `Ctrl+B n` / `p` | ⌃⇥ / ⌃⇧⇥ (or ⌃⇧→ / ⌃⇧←) | ✅ |
+| Jump to tab 1–9 | `Ctrl+B 1–9` | ⌘1–⌘9 | ✅ |
+| Zoom pane | `Ctrl+B z` | ⇧⌘M | ✅ |
+| Close pane | `Ctrl+B x` | ⌘W | ✅ |
+| Rename tab / pane | `Ctrl+B ,` / `.` | ⇧⌘R / ⌥⌘R, or double-click the tab / pane title | ✅ |
+| Swap pane with next / previous | `Ctrl+B }` / `{` | ⌃⌘] / ⌃⌘[, or drag the pane's title strip | ✅ |
+| Move a pane to another tab | `hive pane move` | Pane menu → Move To, or drag onto a pane's edge | ✅ |
+| Popup shell / run in popup | `Ctrl+B f` | ⌥⌘P / ⌥⇧⌘P | ✅ |
+| Your `[[keys.command]]` entries | `Ctrl+B` + their key | ⌃⌥ + their key, Commands menu | ✅ |
+| Find agent or pane | `Ctrl+B w` | ⌘K | ✅ |
+| Overview | `Ctrl+B O` | ⇧⌘O | ✅ |
+| Inbox | — | ⇧⌘I | ✅ desktop only |
+| Show / hide sidebar | `Ctrl+B b` | ⌃⌘S | ✅ |
+| Find in scrollback | `Ctrl+B [` then `/` | ⌘F | ✅ |
+| Plugin palette | `Ctrl+B :` / `P` | ⇧⌘P | ❌ M12, skipped |
+| Copy mode / paste | `Ctrl+B [` / `]` | Native selection, ⌘C / ⌘V | ✅ |
+| Paste image into agent | `Ctrl+B I` | ⌘V with an image on the clipboard | ✅ |
+| Detach | `Ctrl+B d` | Close the window; agents keep running | ✅ |
+| Show key bindings | `Ctrl+B ?` | Help → Keyboard Shortcuts (⌘/) | ✅ |
+
+The TUI keys in this table are the defaults from `hive config keys`; `[keys]` remaps them, and the
+app's Keyboard Shortcuts sheet shows your own. A row that shows a CLI command has no default TUI key.
+
+---
+
+## Parity audit — 2026-11-05
+
+The app was compared with `hive` 1.3.0-rc.3, whose daemon publishes 103 API methods at API level 12
+(`hive api schema`). Every CLI command group's subcommands were listed too.
+
+**API coverage.** The app calls 38 of the 103 methods over the socket and reaches a few more through
+the CLI (sessions, `gc`, daemon start and stop, machines, integrations, `web status`). Of the methods
+it doesn't call:
+
+- **Covered another way, not a gap (~25):** `*.get` and `*.list` for agents, tabs, panes, environments
+  and processes come from `api.snapshot` and the events stream. `api.schema`, `task.wait` and
+  `terminal.input` aren't needed because the terminal writes straight to its pipe. Plugin-side calls
+  (`plugin.ready`, `plugin.request`, `plugin.card`, `plugin.status`, `agent.reload`) are made by
+  plugins, not by clients.
+- **Real gaps:** listed below with their milestone.
+
+| Area | Methods / commands not used | Milestone |
 | --- | --- | --- |
-| New tab | `Ctrl+B c` | ⌘T |
-| Split right / down | `Ctrl+B %` / `"` | ⌘D / ⇧⌘D |
-| Move between panes | `Ctrl+B ←↑→↓` | ⌥⌘←↑→↓ |
-| Next / previous tab | `Ctrl+B n` / `p` | ⌃Tab / ⌃⇧Tab |
-| Jump to tab 1–9 | `Ctrl+B 1–9` | ⌘1–⌘9 |
-| Zoom pane | `Ctrl+B z` | ⇧⌘↩ |
-| Close pane | `Ctrl+B x` | ⌘W |
-| Find agent or pane | `Ctrl+B w` | ⌘K |
-| Overview | `Ctrl+B O` | ⇧⌘O |
-| Show / hide sidebar | `Ctrl+B b` | ⌃⌘S |
-| Plugin palette | `Ctrl+B :` / `P` | ⇧⌘P |
-| Copy mode / paste | `Ctrl+B [` / `]` | Native selection, ⌘C / ⌘V |
-| Paste image into agent | `Ctrl+B I` | ⌘V with an image on the clipboard |
-| Detach | `Ctrl+B d` | Close the window; agents keep running |
-| Show key bindings | `Ctrl+B ?` | Help menu → Keyboard Shortcuts |
+| Tabs and panes | `tab.focus`, `pane.move`, `pane.swap`, `pane.popup`, `pane.run`, `pane.send_text`, `pane.send_keys`, `pane.wait_output`; `tab.rename` and `pane.rename` have code but no UI | M8 |
+| Environments | `environment.update`, `environment set/unset` | M9 |
+| Processes | `process.start`, `process.stop`, `process.logs`, `process.logs.stream` | M9 |
+| Metadata | `metadata.list`, `metadata.report` | M9 |
+| Agents | `agent.rename`, `agent.read`, `agent.wait`, `agent.focus`, `agent.report` | M9 |
+| Worktrees | `worktree.list`, `worktree.open`, `worktree.remove` | M9 |
+| Web and observers | `web share/grants/revoke/serve/runtime/push`, `observer.activity`, `observer.validate` | M10 |
+| Runtime | `runtime.status`, `runtime.ping` (through the CLI today), `debug.stats`, `debug.pprof`, `client.report`, `session remove/stop` | M10 |
+| Terminal | `terminal.graphics`, `terminal.snapshot` | M10 |
+| CLI only | `hive demo`, `hive mcp`, `hive --skill`, `--remote host` | M10 |
+| Plugins | all 12 `plugin.*` methods and 30 `hive plugin` subcommands | M12 (skipped) |
+
+**Corrections to earlier statuses.** These were marked shipped but aren't in the code:
+
+- tab and pane renaming, which has store methods but no caller;
+- pane titles and tokens (`metadata`);
+- renaming an agent;
+- worktree list, open and remove;
+- the ⌘T and ⌃Tab shortcuts and Help → Keyboard Shortcuts.
+
+Two items marked partial or next have since shipped: Changes staging and commits, and terminal polish.
+
+**Out of scope.** `hive completion`, `hive proxy`, `hive events`, `--template` and `[keys]` remapping
+are for shells and scripts, and have no desktop equivalent.
 
 ---
 
@@ -453,7 +704,7 @@ remains skipped.
   through one multiplexed connection? This depends on how the frame and image budgets behave from
   a GUI client.
 - **Sandboxing.** The app isn't sandboxed (it needs to spawn shells, read the Hive socket and send
-  signals for Kill Ports). Mac App Store distribution would need a helper tool. Decide before M10.
+  signals for Kill Ports). Mac App Store distribution would need a helper tool. Decide before M13.
 
 ---
 

@@ -422,7 +422,9 @@ struct TerminalMenuItem {
     var isEnabled = true
     /// Draws a separator above this item.
     var startsGroup = false
-    let action: () -> Void
+    /// Shown as a submenu; the item's own action is then unused.
+    var children: [TerminalMenuItem] = []
+    var action: () -> Void = {}
 }
 
 /// One terminal with its end-of-session banner. Reports clicks so Hive can move its focus.
@@ -677,13 +679,23 @@ private struct TerminalHostView: NSViewRepresentable {
         }
         // A terminal shown in two places (tab and inspector) takes the menu of where it is now.
         if terminal.menu !== coordinator.menu { terminal.menu = coordinator.menu }
-        if autoFocusTerminal, container.window?.firstResponder !== terminal {
-            DispatchQueue.main.async { terminal.window?.makeFirstResponder(terminal) }
+        if autoFocusTerminal, container.window?.firstResponder !== terminal, !Self.isEditingText(in: container.window) {
+            DispatchQueue.main.async {
+                // Re-check: a field may have started editing since this update was scheduled.
+                guard !Self.isEditingText(in: terminal.window) else { return }
+                terminal.window?.makeFirstResponder(terminal)
+            }
         }
         if coordinator.appliedScheme != colorScheme {
             coordinator.appliedScheme = colorScheme
             TerminalPalette(colorScheme).apply(to: terminal)
         }
+    }
+
+    /// Whether a text field (a tab being renamed, the sidebar search) has the keyboard. The
+    /// focused terminal takes it back from other terminals, never from someone typing a name.
+    private static func isEditingText(in window: NSWindow?) -> Bool {
+        window?.firstResponder is NSText
     }
 
     static func dismantleNSView(_ container: NSView, coordinator: Coordinator) {
@@ -704,6 +716,14 @@ private final class ClosureMenuItem: NSMenuItem, NSMenuItemValidation {
         target = self
         keyEquivalentModifierMask = entry.modifiers
         image = entry.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+        if !entry.children.isEmpty {
+            let menu = NSMenu(title: entry.title)
+            entry.children.forEach { child in
+                if child.startsGroup, !menu.items.isEmpty { menu.addItem(.separator()) }
+                menu.addItem(ClosureMenuItem(child))
+            }
+            submenu = menu
+        }
     }
 
     required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -711,6 +731,13 @@ private final class ClosureMenuItem: NSMenuItem, NSMenuItemValidation {
     @objc private func fire() { handler() }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { allowed }
+}
+
+extension TerminalSurface {
+    /// The terminal's background, for chrome that sits flush against it.
+    static func background(_ colorScheme: ColorScheme) -> SwiftUI.Color {
+        TerminalPalette(colorScheme).background
+    }
 }
 
 private struct TerminalPalette {

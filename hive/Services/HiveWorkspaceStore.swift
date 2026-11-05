@@ -375,6 +375,11 @@ final class HiveWorkspaceStore: ObservableObject {
         tabs.removeAll { $0.id == id }
     }
 
+    /// Makes a tab the active one in Hive, so the TUI and other clients follow.
+    func focusTab(_ id: String) async throws {
+        upsert(try decode(HiveTab.self, from: try await call("tab.focus", ["id": id])), into: &tabs)
+    }
+
     func renameTab(_ id: String, to name: String) async throws {
         upsert(try decode(HiveTab.self, from: try await call("tab.rename", ["id": id, "name": name])), into: &tabs)
     }
@@ -386,8 +391,11 @@ final class HiveWorkspaceStore: ObservableObject {
     }
 
     /// Splits a pane: `direction` is where the new pane goes (right, left, down, up).
-    func splitPane(_ id: String, direction: String) async throws {
-        let pane = try decode(HivePane.self, from: try await call("pane.split", ["pane": id, "direction": direction]))
+    /// `command` runs there instead of the environment's shell.
+    func splitPane(_ id: String, direction: String, command: [String]? = nil) async throws {
+        var params: [String: Any] = ["pane": id, "direction": direction]
+        if let command { params["spec"] = ["command": command] }
+        let pane = try decode(HivePane.self, from: try await call("pane.split", params))
         panes[pane.id] = pane
         // The tab's new layout and the new process arrive as events; settle anything missed.
         scheduleSnapshot()
@@ -395,12 +403,59 @@ final class HiveWorkspaceStore: ObservableObject {
 
     /// Focuses a pane, or with a direction its neighbour that way.
     func focusPane(_ id: String, direction: String? = nil) async throws {
-        if direction == nil, let tabID = panes[id]?.tabID ?? tabs.first(where: { $0.paneIDs.contains(id) })?.id {
+        if direction == nil, let tabID = panes[id]?.tabID ?? tabs.first(where: { $0.paneIDs.contains(id) || $0.popupPaneIDs.contains(id) })?.id {
             noteFocus(id, inTab: tabID)
         }
         var params: [String: Any] = ["id": id]
         if let direction { params["direction"] = direction }
         _ = try await call("pane.focus", params)
+    }
+
+    /// Trades the places of two panes; both keep running.
+    func swapPanes(_ id: String, with other: String) async throws {
+        _ = try await call("pane.swap", ["id": id, "with": other])
+        scheduleSnapshot()
+    }
+
+    /// Moves a pane next to `target` in `tabID`, or into a new tab in `environmentID`.
+    func movePane(_ id: String, toTab tabID: String? = nil, environmentID: String? = nil, nextTo target: String? = nil, direction: String? = nil) async throws -> HivePane {
+        var params: [String: Any] = ["pane": id]
+        if let tabID { params["tab_id"] = tabID }
+        if let environmentID { params["environment_id"] = environmentID }
+        if let target { params["target"] = target }
+        if let direction { params["direction"] = direction }
+        let pane = try decode(HivePane.self, from: try await call("pane.move", params))
+        panes[pane.id] = pane
+        scheduleSnapshot()
+        return pane
+    }
+
+    /// Moves a pane beside another pane of its own tab. Hive only moves panes between tabs, so it
+    /// hops through a new tab of its environment, which closes again once the pane leaves it.
+    func rearrangePane(_ id: String, nextTo target: String, direction: String) async throws {
+        guard let pane = panes[id] else { return }
+        let home = pane.tabID
+        _ = try await movePane(id, environmentID: pane.environmentID)
+        do {
+            _ = try await movePane(id, toTab: home, nextTo: target, direction: direction)
+        } catch {
+            // Don't strand the pane in the stopover tab.
+            _ = try? await movePane(id, toTab: home)
+            throw error
+        }
+    }
+
+    /// Opens a floating pane over a tab. With no command it runs the environment's shell.
+    func openPopup(inTab tabID: String, command: [String]? = nil, name: String? = nil, widthPercent: Int = 80, heightPercent: Int = 80) async throws -> HivePane {
+        var spec: [String: Any] = [:]
+        if let command { spec["command"] = command }
+        if let name { spec["name"] = name }
+        var params: [String: Any] = ["tab_id": tabID, "width_pct": widthPercent, "height_pct": heightPercent]
+        if !spec.isEmpty { params["spec"] = spec }
+        let pane = try decode(HivePane.self, from: try await call("pane.popup", params))
+        panes[pane.id] = pane
+        scheduleSnapshot()
+        return pane
     }
 
     func zoomPane(_ id: String, on: Bool) async throws {
@@ -414,7 +469,8 @@ final class HiveWorkspaceStore: ObservableObject {
     }
 
     func renamePane(_ id: String, to name: String) async throws {
-        _ = try await call("pane.rename", ["id": id, "name": name])
+        let pane = try decode(HivePane.self, from: try await call("pane.rename", ["id": id, "name": name]))
+        panes[pane.id] = pane
     }
 
     // MARK: Agents

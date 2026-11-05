@@ -107,12 +107,35 @@ struct HiveDashboardView: View {
                 saveDirectories()
             }
             .frame(minWidth: 820, minHeight: 540)
+            .focusedSceneObject(viewModel)
     }
 
     private var workspaceSheets: some View {
         shell
             .modifier(QuickOpenOverlay(showing: $viewModel.showingQuickOpen, viewModel: viewModel))
             .modifier(PendingCloseDialog(pending: $viewModel.pendingClose, confirm: viewModel.confirm))
+            .modifier(PaneRenameDialog(viewModel: viewModel))
+            .sheet(isPresented: $viewModel.showingShortcuts) {
+                KeyboardShortcutsSheet(viewModel: viewModel)
+            }
+            .sheet(isPresented: $viewModel.showingRunInPopup) {
+                RunInPopupSheet { command in viewModel.openPopup(command: command) }
+            }
+            .overlay(alignment: .bottom) {
+                if let status = viewModel.commandStatus {
+                    Label(status, systemImage: "terminal")
+                        .font(.callout)
+                        .lineLimit(1)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(.regularMaterial, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+                        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+                        .padding(.bottom, 22)
+                        .frame(maxWidth: 520)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: viewModel.commandStatus)
             .sheet(isPresented: $showingCreateEnvironment) {
                 CreateEnvironmentSheet { name, path in
                     Task { await viewModel.createEnvironment(name: name, path: path) }
@@ -213,44 +236,17 @@ struct HiveDashboardView: View {
         viewModel.openAgent(agentID)
     }
 
+    /// Shortcuts the menus can't own: ⌘W is File → Close too, and ⌃⇧←/→ are extra keys for tabs.
+    /// Everything else lives in the Tab, Pane and View menus (`HiveCommands`).
     private var keyboardShortcuts: some View {
-            VStack(spacing: 0) {
-                Button { viewModel.showingQuickOpen = true } label: { EmptyView() }
-                    .keyboardShortcut("k", modifiers: .command)
-                Button { viewModel.showOverview(!viewModel.showingOverview) } label: { EmptyView() }
-                    .keyboardShortcut("o", modifiers: [.command, .shift])
-                Button { viewModel.showInbox(!viewModel.showingInbox) } label: { EmptyView() }
-                    .keyboardShortcut("i", modifiers: [.command, .shift])
-                Button { viewModel.requestCloseFocusedPane() } label: { EmptyView() }
-                    .keyboardShortcut("w", modifiers: .command)
-                Button { viewModel.selectAdjacentTab(-1) } label: { EmptyView() }
-                    .keyboardShortcut(.leftArrow, modifiers: [.control, .shift])
-                Button { viewModel.selectAdjacentTab(1) } label: { EmptyView() }
-                    .keyboardShortcut(.rightArrow, modifiers: [.control, .shift])
-                Button { viewModel.splitFocusedPane("right") } label: { EmptyView() }
-                    .keyboardShortcut("d", modifiers: .command)
-                Button { viewModel.splitFocusedPane("down") } label: { EmptyView() }
-                    .keyboardShortcut("d", modifiers: [.command, .shift])
-                Button { viewModel.toggleZoom() } label: { EmptyView() }
-                    .keyboardShortcut("m", modifiers: [.command, .shift])
-                Button { viewModel.moveFocus("left") } label: { EmptyView() }
-                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-                Button { viewModel.moveFocus("right") } label: { EmptyView() }
-                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
-                Button { viewModel.moveFocus("up") } label: { EmptyView() }
-                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-                Button { viewModel.moveFocus("down") } label: { EmptyView() }
-                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
-                Button("1") { viewModel.selectTab(at: 0) }.keyboardShortcut("1", modifiers: .command)
-                Button("2") { viewModel.selectTab(at: 1) }.keyboardShortcut("2", modifiers: .command)
-                Button("3") { viewModel.selectTab(at: 2) }.keyboardShortcut("3", modifiers: .command)
-                Button("4") { viewModel.selectTab(at: 3) }.keyboardShortcut("4", modifiers: .command)
-                Button("5") { viewModel.selectTab(at: 4) }.keyboardShortcut("5", modifiers: .command)
-                Button("6") { viewModel.selectTab(at: 5) }.keyboardShortcut("6", modifiers: .command)
-                Button("7") { viewModel.selectTab(at: 6) }.keyboardShortcut("7", modifiers: .command)
-                Button("8") { viewModel.selectTab(at: 7) }.keyboardShortcut("8", modifiers: .command)
-                Button("9") { viewModel.selectTab(at: 8) }.keyboardShortcut("9", modifiers: .command)
-            }
+        VStack(spacing: 0) {
+            Button { viewModel.requestCloseFocusedPane() } label: { EmptyView() }
+                .keyboardShortcut("w", modifiers: .command)
+            Button { viewModel.selectAdjacentTab(-1) } label: { EmptyView() }
+                .keyboardShortcut(.leftArrow, modifiers: [.control, .shift])
+            Button { viewModel.selectAdjacentTab(1) } label: { EmptyView() }
+                .keyboardShortcut(.rightArrow, modifiers: [.control, .shift])
+        }
     }
 
     private var preferredStartEnvironmentID: String? { startAgentEnvironmentID ?? viewModel.activeEnvironment?.id }
@@ -281,8 +277,13 @@ struct HiveDashboardView: View {
     private var workspaceToolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             WorkspaceTabBar(
-                items: viewModel.tabs.map { WorkspaceTabBar.Item(id: $0.id, title: title(for: $0.destination)) },
+                items: viewModel.tabs.map { WorkspaceTabBar.Item(id: $0.id, title: title(for: $0), label: label(for: $0)) },
                 activeID: $viewModel.activeTabID,
+                renamingID: Binding(
+                    get: { if case .tab(let id) = viewModel.renaming { id } else { nil } },
+                    set: { viewModel.renaming = $0.map { .tab($0) } }
+                ),
+                onRename: { id, name in viewModel.rename(.tab(id), to: name) },
                 onClose: viewModel.requestCloseTab,
                 onCloseOthers: viewModel.closeOtherTabs
             )
@@ -626,6 +627,17 @@ struct HiveDashboardView: View {
             get: { inspectorPanel != nil },
             set: { if !$0 { inspectorPanel = nil } }
         )
+    }
+
+    private func title(for tab: WorkspaceTab) -> String {
+        if let name = tab.name, tab.hiveTabID == nil { return name }
+        return title(for: tab.destination)
+    }
+
+    /// The short name on a tab pill: the Hive tab's name, or one given here.
+    private func label(for tab: WorkspaceTab) -> String? {
+        if let id = tab.hiveTabID { return viewModel.workspace.tab(id)?.name }
+        return tab.name
     }
 
     private func title(for destination: WorkspaceDestination) -> String {
@@ -1069,6 +1081,34 @@ private struct EnvironmentRemovalDialog: ViewModifier {
                  ? "Its agents are stopped and the workspace Hive created is deleted."
                  : "Its agents are stopped. Your folder stays where it is.")
         }
+    }
+}
+
+/// Asks for a pane's new name. Tabs are renamed in place on the tab bar instead.
+private struct PaneRenameDialog: ViewModifier {
+    @ObservedObject var viewModel: AppViewModel
+    @State private var name = ""
+
+    private var paneID: String? {
+        if case .pane(let id) = viewModel.renaming { id } else { nil }
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .alert("Rename Pane", isPresented: Binding(get: { paneID != nil }, set: { if !$0 { viewModel.renaming = nil } })) {
+                TextField("Name", text: $name)
+                Button("Rename") {
+                    if let paneID { viewModel.rename(.pane(paneID), to: name) }
+                    viewModel.renaming = nil
+                }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Cancel", role: .cancel) { viewModel.renaming = nil }
+            } message: {
+                Text("Hive shows this name here, in the TUI and in other clients.")
+            }
+            .onChange(of: viewModel.renaming) { _, target in
+                if let target, case .pane = target { name = viewModel.currentName(of: target) }
+            }
     }
 }
 

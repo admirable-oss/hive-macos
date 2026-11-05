@@ -6,6 +6,7 @@ struct AppSettingsView: View {
     @AppStorage(AgentNotifier.effectiveStatesKey) private var notifyStates = "blocked, done"
     @AppStorage(AgentNotifier.systemNotificationsKey) private var systemNotifications = false
     @AppStorage("hive.session.name") private var sessionName = "default"
+    @AppStorage(AppViewModel.syncTabFocusKey) private var syncTabFocus = true
 
     private var preferredColorScheme: ColorScheme? {
         switch appearance {
@@ -27,6 +28,13 @@ struct AppSettingsView: View {
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 360)
                 Text("Applies to the app and its terminals. The multiplexer’s own theme stays in Hive’s config.toml.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Workspace") {
+                Toggle("Switching tabs here switches Hive’s active tab", isOn: $syncTabFocus)
+                Text("The TUI and other clients follow the tab in front of the app. Turn this off to keep them independent, for example when you run the TUI next to the app.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

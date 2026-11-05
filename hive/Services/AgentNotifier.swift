@@ -8,7 +8,37 @@ struct HiveConfigDocument: Decodable {
         let agents: [String: [String]]?
     }
 
+    struct Keys: Decodable {
+        let command: [HiveKeyCommand]?
+    }
+
     let notify: Notifications?
+    let keys: Keys?
+}
+
+/// One `[[keys.command]]` entry: a command the TUI runs on a key.
+struct HiveKeyCommand: Decodable, Hashable, Identifiable {
+    let keys: [String]?
+    /// popup, pane, shell or plugin_action.
+    let type: String
+    let command: String?
+    let mode: String?
+
+    var id: String { "\(type):\(keys?.joined(separator: ",") ?? ""):\(command ?? "")" }
+
+    /// Plugin actions wait for plugin support; the rest run from the Commands menu.
+    var isSupported: Bool {
+        ["popup", "pane", "shell"].contains(type) && !(command ?? "").isEmpty
+    }
+
+    var title: String { command ?? type }
+
+    /// A single-character TUI key becomes ⌃⌥ plus that key in the app.
+    var shortcutKey: Character? {
+        guard let key = keys?.first, key.count == 1, let character = key.first,
+              character.isLetter || character.isNumber else { return nil }
+        return Character(character.lowercased())
+    }
 }
 
 /// Tells the user when an agent needs them or has finished, with Approve and Deny

@@ -17,6 +17,8 @@ struct WorkspaceTab: Identifiable, Hashable, Codable {
     var destination: WorkspaceDestination
     /// Where a scratch shell last was, so a relaunch reopens it there.
     var directory: String?
+    /// A name given in the app. Hive tabs keep theirs in Hive; this is for tabs only the app knows.
+    var name: String?
 
     var hiveTabID: String? {
         if case .hive(let id) = destination { return id }

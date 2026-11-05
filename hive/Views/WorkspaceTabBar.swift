@@ -4,10 +4,15 @@ struct WorkspaceTabBar: View {
     struct Item: Identifiable {
         let id: WorkspaceTab.ID
         let title: String
+        /// The tab's name, shown next to its number when it has one.
+        var label: String?
     }
 
     let items: [Item]
     @Binding var activeID: WorkspaceTab.ID?
+    /// The tab whose name is being edited in place.
+    @Binding var renamingID: WorkspaceTab.ID?
+    let onRename: (WorkspaceTab.ID, String) -> Void
     let onClose: (WorkspaceTab.ID) -> Void
     let onCloseOthers: (WorkspaceTab.ID) -> Void
 
@@ -19,13 +24,22 @@ struct WorkspaceTabBar: View {
                         WorkspaceTabButton(
                             number: index + 1,
                             title: item.title,
+                            label: item.label,
                             isActive: item.id == activeID,
+                            isRenaming: renamingID == item.id,
                             canClose: true,
                             select: { activeID = item.id },
+                            startRename: { activeID = item.id; renamingID = item.id },
+                            finishRename: { name in
+                                if let name { onRename(item.id, name) }
+                                renamingID = nil
+                            },
                             close: { onClose(item.id) }
                         )
                         .id(item.id)
                         .contextMenu {
+                            Button("Rename Tab…") { activeID = item.id; renamingID = item.id }
+                            Divider()
                             Button("Close Tab") { onClose(item.id) }
                             Button("Close Other Tabs") { onCloseOthers(item.id) }
                                 .disabled(items.count < 2)
@@ -56,29 +70,64 @@ struct WorkspaceTabBar: View {
 private struct WorkspaceTabButton: View {
     let number: Int
     let title: String
+    let label: String?
     let isActive: Bool
+    let isRenaming: Bool
     let canClose: Bool
     let select: () -> Void
+    let startRename: () -> Void
+    /// The new name, or nil when the edit was cancelled.
+    let finishRename: (String?) -> Void
     let close: () -> Void
 
     @State private var isHovering = false
+    @State private var draft = ""
+    @FocusState private var fieldFocused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            Button(action: select) {
-                HStack(spacing: 6) {
-                    Text(">_")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundStyle(isActive ? Color.hiveAmber : Color.secondary)
-                    Text("\(number)")
-                        .font(.system(size: 12, weight: .semibold))
-                        .monospacedDigit()
+            HStack(spacing: 6) {
+                Text(">_")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(isActive ? Color.hiveAmber : Color.secondary)
+                Text("\(number)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(isActive ? Color.primary : Color.secondary)
+                if isRenaming {
+                    TextField("Tab name", text: $draft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 120)
+                        .focused($fieldFocused)
+                        .onSubmit { finishRename(draft) }
+                        .onExitCommand { finishRename(nil) }
+                        .onChange(of: fieldFocused) { _, focused in
+                            // Clicking elsewhere keeps what was typed, as Finder does.
+                            if !focused && isRenaming { finishRename(draft) }
+                        }
+                        .onAppear {
+                            draft = label ?? ""
+                            DispatchQueue.main.async { fieldFocused = true }
+                        }
+                } else if let label, !label.isEmpty {
+                    Text(label)
+                        .font(.system(size: 12, weight: isActive ? .medium : .regular))
                         .foregroundStyle(isActive ? Color.primary : Color.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 110, alignment: .leading)
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .help(title)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2, perform: startRename)
+            .simultaneousGesture(TapGesture().onEnded { if !isRenaming { select() } })
+            .help("\(title) — double-click to rename")
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+            .accessibilityLabel("Tab \(number)\(label.map { ", \($0)" } ?? "")")
+            .accessibilityAction(.default, select)
+            .accessibilityAction(named: "Rename", startRename)
 
             if canClose {
                 Button(action: close) {

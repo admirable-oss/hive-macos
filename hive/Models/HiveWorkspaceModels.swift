@@ -14,15 +14,31 @@ struct HiveTab: Decodable, Identifiable, Hashable {
     /// The zoomed pane's ID, when one fills the tab.
     let zoomed: String?
     let layout: HiveLayoutNode?
+    /// Floating panes over the tab, outside its layout; the last is on top.
+    let popups: [HivePopup]?
     let width: Int?
     let height: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, active, focused, zoomed, layout, width, height
+        case id, name, active, focused, zoomed, layout, popups, width, height
         case environmentID = "environment_id"
     }
 
     var paneIDs: [String] { layout?.paneIDs ?? [] }
+    var popupPaneIDs: [String] { popups?.map(\.pane) ?? [] }
+}
+
+/// A floating pane over a tab, sized in percent of it (`pane.popup`).
+struct HivePopup: Decodable, Hashable {
+    let pane: String
+    let widthPercent: Int
+    let heightPercent: Int
+
+    enum CodingKeys: String, CodingKey {
+        case pane
+        case widthPercent = "width_pct"
+        case heightPercent = "height_pct"
+    }
 }
 
 /// How a tab's panes are arranged: a binary tree of splits whose leaves are panes.
@@ -83,9 +99,10 @@ struct HivePane: Decodable, Identifiable, Hashable {
     let name: String?
     let focused: Bool?
     let zoomed: Bool?
+    let popup: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, focused, zoomed
+        case id, name, focused, zoomed, popup
         case tabID = "tab_id"
         case environmentID = "environment_id"
         case processID = "process_id"
