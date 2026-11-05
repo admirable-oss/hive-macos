@@ -184,6 +184,83 @@ struct HiveWorktreeInfo: Decodable, Hashable, Identifiable {
     var id: String { path }
 }
 
+struct HiveObserverActivity: Decodable {
+    struct Observer: Decodable, Identifiable, Hashable {
+        let id: String
+        let name: String
+        let connections: Int
+    }
+
+    let observers: [Observer]
+    /// Watchers per watched thing.
+    let watched: [String: Int]
+}
+
+struct HiveObserverValidation: Decodable {
+    struct Credential: Decodable {
+        let id: String
+        let name: String
+        let expiresAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name
+            case expiresAt = "expires_at"
+        }
+    }
+
+    let valid: Bool
+    let state: String
+    let credential: Credential?
+}
+
+/// The daemon itself (`runtime.status`).
+struct HiveRuntimeStatus: Decodable, Hashable {
+    let status: String
+    let socket: String
+    let startedAt: String
+    let pid: Int
+    let version: String
+    let protocolVersion: String
+    let apiLevel: Int
+    let agentsSurviveRestart: Bool
+    let session: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status, socket, pid, version, session
+        case startedAt = "started_at"
+        case protocolVersion = "protocol_version"
+        case apiLevel = "api_level"
+        case agentsSurviveRestart = "agents_survive_restart"
+    }
+}
+
+/// The daemon's resource use (`debug.stats`).
+struct HiveDebugStats: Decodable, Hashable {
+    let goroutines: Int
+    let openFiles: Int
+    let heapAlloc: Int
+    let heapSys: Int
+    let numGC: Int
+    let uptimeSeconds: Double
+
+    enum CodingKeys: String, CodingKey {
+        case goroutines
+        case openFiles = "open_fds"
+        case heapAlloc = "heap_alloc"
+        case heapSys = "heap_sys"
+        case numGC = "num_gc"
+        case uptimeSeconds = "uptime_seconds"
+    }
+}
+
+/// A terminal's screen as text, with what scrolled off it (`terminal.snapshot`); oldest first.
+struct HiveTerminalSnapshot: Decodable {
+    let width: Int
+    let height: Int
+    let lines: [String]
+    let scrollback: [String]?
+}
+
 /// How an `agent.wait` ended: reached, timeout, blocked, stalled or exited.
 struct HiveAgentWaitResult: Decodable {
     let outcome: String

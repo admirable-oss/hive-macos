@@ -225,6 +225,9 @@ final class HivePaneTerminalView: TerminalView {
 /// brings painted screen updates and takes keystrokes, and resizes go through
 /// `terminal.resize`. Closing the view leaves the pane's process running.
 final class PaneTerminalSession: TerminalSession, TerminalViewDelegate {
+    /// Whether panes show the images their programs draw (kitty graphics, sixel).
+    static let inlineImagesKey = "hive.terminal.inlineImages"
+
     let paneID: String
     private let workspace: HiveWorkspaceStore
     private var pipe: HivePipe?
@@ -232,7 +235,10 @@ final class PaneTerminalSession: TerminalSession, TerminalViewDelegate {
     private var viewID: String?
     private var streamTask: Task<Void, Never>?
     private var resizeTask: Task<Void, Never>?
+    private var graphicsTask: Task<Void, Never>?
+    private var graphicsPipe: HivePipe?
     private var hasStarted = false
+    private var hasReplayedHistory = false
 
     override var restartTitle: String { "Reattach" }
     override var closeTitle: String { "Close Pane" }
@@ -275,6 +281,79 @@ final class PaneTerminalSession: TerminalSession, TerminalViewDelegate {
         super.terminate()
         streamTask?.cancel()
         pipe?.close()
+        stopGraphics()
+    }
+
+    /// The screen and its scrollback as plain text, for Copy Screen and Save Scrollback.
+    func snapshotText(scrollback: Int) async throws -> String {
+        guard let processID = processID ?? workspace.panes[paneID]?.processID else { return "" }
+        let snapshot = try await workspace.terminalSnapshot(processID: processID, scrollback: scrollback, ansi: false)
+        var lines = (snapshot.scrollback ?? []) + snapshot.lines
+        while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The daemon paints only the screen, so what scrolled off it before this view attached would
+    /// be missing. Feed it in first, then push it all into scrollback for the first paint to land below.
+    private func replayHistory(processID: String) async {
+        guard !hasReplayedHistory else { return }
+        hasReplayedHistory = true
+        guard let snapshot = try? await workspace.terminalSnapshot(processID: processID, scrollback: 5000, ansi: true),
+              let history = snapshot.scrollback, !history.isEmpty else { return }
+        terminalView.feed(text: history.joined(separator: "\r\n") + "\u{1b}[0m\r\n")
+        terminalView.feed(text: String(repeating: "\r\n", count: max(terminalView.terminalDimensions.rows, snapshot.height)))
+    }
+
+    // MARK: Graphics
+
+    private func startGraphics() {
+        stopGraphics()
+        guard UserDefaults.standard.object(forKey: Self.inlineImagesKey) as? Bool ?? true,
+              let processID else { return }
+        let size = terminalView.terminalDimensions
+        graphicsTask = Task {
+            guard let pipe = try? await workspace.openGraphics(processID: processID, width: size.cols, height: size.rows) else { return }
+            graphicsPipe = pipe
+            var buffer = Data()
+            for await chunk in pipe.incoming {
+                buffer.append(chunk)
+                for frame in Self.graphicsFrames(&buffer) {
+                    // Draw where the program drew it, then put the cursor back for the screen stream.
+                    var bytes = Array("\u{1b}7\u{1b}[\(frame.row + 1);\(frame.column + 1)H".utf8)
+                    bytes += frame.payload
+                    bytes += Array("\u{1b}8".utf8)
+                    terminalView.feed(byteArray: bytes[...])
+                }
+            }
+        }
+    }
+
+    private func stopGraphics() {
+        graphicsTask?.cancel()
+        graphicsTask = nil
+        graphicsPipe?.close()
+        graphicsPipe = nil
+    }
+
+    /// `terminal.graphics` frames: a big-endian UInt32 length, the cell (column in the high 16 bits,
+    /// row in the low 16), then that many bytes of kitty or sixel escape sequence. Complete frames
+    /// leave `buffer`; a partial one stays for the next chunk.
+    nonisolated static func graphicsFrames(_ buffer: inout Data) -> [(column: Int, row: Int, payload: [UInt8])] {
+        var frames: [(Int, Int, [UInt8])] = []
+        var bytes = [UInt8](buffer)
+        var offset = 0
+        while bytes.count - offset >= 8 {
+            let length = bytes[offset..<offset + 4].reduce(0) { $0 << 8 | Int($1) }
+            let cell = bytes[offset + 4..<offset + 8].reduce(0) { $0 << 8 | Int($1) }
+            guard bytes.count - offset - 8 >= length else { break }
+            frames.append((cell >> 16, cell & 0xFFFF, Array(bytes[offset + 8..<offset + 8 + length])))
+            offset += 8 + length
+        }
+        if offset > 0 {
+            bytes.removeFirst(offset)
+            buffer = Data(bytes)
+        }
+        return frames
     }
 
     private func attachAndStream() async {
@@ -287,11 +366,13 @@ final class PaneTerminalSession: TerminalSession, TerminalViewDelegate {
             }
             guard let processID else { return ended("This pane is gone") }
 
+            await replayHistory(processID: processID)
             let size = terminalView.terminalDimensions
             let attached = try await workspace.attach(processID: processID, width: size.cols, height: size.rows)
             self.processID = processID
             viewID = attached.view.viewID
             pipe = attached.pipe
+            startGraphics()
 
             // The view may have been laid out at another size while attaching.
             let current = terminalView.terminalDimensions
@@ -331,6 +412,8 @@ final class PaneTerminalSession: TerminalSession, TerminalViewDelegate {
             try? await Task.sleep(for: .milliseconds(80))
             guard !Task.isCancelled, let processID, let viewID else { return }
             try? await workspace.resize(processID: processID, viewID: viewID, width: cols, height: rows)
+            // A graphics view has no resize of its own; a new one places images for the new size.
+            if graphicsTask != nil { startGraphics() }
         }
     }
 

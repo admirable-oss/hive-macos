@@ -8,6 +8,8 @@ enum WorkspaceDestination: Hashable, Codable {
     case remote(machine: String, agentID: String, title: String)
     /// An interactive SSH login to a saved machine.
     case remoteShell(machine: String, host: String)
+    /// An agent on an SSH host that isn't saved as a machine, through `hive --remote host`.
+    case remoteHost(host: String, agentID: String, title: String)
     /// A local login shell outside any environment. Only this window knows about it.
     case scratch
 }

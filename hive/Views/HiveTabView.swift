@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A Hive tab: its panes laid out the way the daemon arranges them, one live terminal each.
 /// Every pane is placed by its own frame rather than nested split views, so a split, a close
@@ -230,10 +231,34 @@ struct HiveTabView: View {
                 viewModel.clearMetadata(pane: id)
             })
         }
+        items.append(TerminalMenuItem(title: "Copy Screen", symbol: "text.viewfinder", startsGroup: true) {
+            Task { await copySnapshot(of: id, scrollback: 0) }
+        })
+        items.append(TerminalMenuItem(title: "Save Scrollback…", symbol: "square.and.arrow.down") {
+            Task { await saveScrollback(of: id) }
+        })
         items.append(TerminalMenuItem(title: "Open Popup Shell", symbol: "macwindow.on.rectangle", key: "p", modifiers: [.command, .option], startsGroup: true) {
             viewModel.openPopup()
         })
         return items
+    }
+
+    /// The pane's text from Hive, so it includes what this view never received.
+    private func copySnapshot(of id: String, scrollback: Int) async {
+        guard let session = terminals.existingPaneSession(id) as? PaneTerminalSession,
+              let text = try? await session.snapshotText(scrollback: scrollback) else { return NSSound.beep() }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func saveScrollback(of id: String) async {
+        guard let session = terminals.existingPaneSession(id) as? PaneTerminalSession,
+              let text = try? await session.snapshotText(scrollback: 100_000) else { return NSSound.beep() }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(paneTitle(id))-scrollback.txt"
+        panel.allowedContentTypes = [.plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try text.write(to: url, atomically: true, encoding: .utf8) } catch { NSSound.beep() }
     }
 
     /// Move to another tab, a new tab, or a new tab in another environment.

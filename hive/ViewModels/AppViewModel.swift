@@ -84,6 +84,9 @@ final class AppViewModel: ObservableObject {
     private var agentWatchTasks: [String: Task<Void, Never>] = [:]
     @Published var showingShortcuts = false
     @Published var showingRunInPopup = false
+    @Published var showingWebObserver = false
+    @Published var showingDiagnostics = false
+    @Published var showingConnectHost = false
     /// `[[keys.command]]` from config.toml: commands bound to keys in the TUI.
     @Published private(set) var customCommands: [HiveKeyCommand] = []
     /// The last line a background command printed, shown briefly.
@@ -98,6 +101,10 @@ final class AppViewModel: ObservableObject {
     private var subscriptions: Set<AnyCancellable> = []
 
     private static let savedTabsKey = "hive.desktop.tabs.v2"
+
+    /// The CLI for this window's session, for what the socket API doesn't cover.
+    var cliService: HiveCLIService { cli }
+    var sessionName: String { cli.sessionName ?? "default" }
 
     init(hiveURL: URL, sessionName: String = "default") {
         cli = HiveCLIService(executableURL: hiveURL, sessionName: sessionName)
@@ -394,6 +401,43 @@ final class AppViewModel: ObservableObject {
             activeTabID = existing.id
         } else {
             append(WorkspaceTab(destination: .remote(machine: machine.name, agentID: agent.id, title: agent.name.isEmpty ? agent.kind : agent.name)))
+        }
+    }
+
+    /// Opens an agent on an SSH host that isn't saved as a machine (`hive --remote host agent attach`).
+    func openRemoteHostAgent(host: String, agent: HiveAgent) {
+        dismissSurfaces()
+        if let existing = tabs.first(where: { if case .remoteHost(let h, let id, _) = $0.destination { return h == host && id == agent.id }; return false }) {
+            activeTabID = existing.id
+        } else {
+            append(WorkspaceTab(destination: .remoteHost(host: host, agentID: agent.id, title: agent.name.isEmpty ? agent.kind : agent.name)))
+        }
+    }
+
+    /// An SSH login to a host, saved as a machine or not.
+    func openSSHShell(host: String) {
+        dismissSurfaces()
+        if let existing = tabs.first(where: { if case .remoteShell(_, let h) = $0.destination { return h == host }; return false }) {
+            activeTabID = existing.id
+        } else {
+            append(WorkspaceTab(destination: .remoteShell(machine: host, host: host)))
+        }
+    }
+
+    /// Opens Hive's demo: a tab of four pretend agents to explore with (`hive demo`).
+    func openDemo() async {
+        struct Demo: Decodable {
+            struct Pane: Decodable { let tabID: String; enum CodingKeys: String, CodingKey { case tabID = "tab_id" } }
+            let panes: [Pane]
+        }
+        await perform {
+            let demo = try JSONDecoder().decode(Demo.self, from: Data(try await self.cli.run(["--json", "demo"]).utf8))
+            guard let tabID = demo.panes.first?.tabID else { return }
+            // The tab can be a moment ahead of the snapshot.
+            for _ in 0..<20 where self.workspace.tab(tabID) == nil {
+                try await Task.sleep(for: .milliseconds(150))
+            }
+            self.openHiveTab(tabID)
         }
     }
 

@@ -26,7 +26,7 @@ clear path from parallel work to reviewed changes.
 | M7 Personal Command Center | `v0.7` | ✅ Live |
 | M8 Parity: Workspace Control | `v0.8` | 🟡 In progress (6 of 7) |
 | M9 Parity: Environments, Processes & Agents | `v0.9` | ✅ Built (2026-11-05) |
-| M10 Parity: Web, Runtime & Onboarding | `v0.10` | Proposed |
+| M10 Parity: Web, Runtime & Onboarding | `v0.10` | ✅ Built (2026-11-05) |
 | M11 macOS Automation & Handoff | `v0.11` | Proposed |
 | M12 Extensibility & Plugin Surfaces | `v0.12` | Skipped for now |
 | M13 Desktop 1.0 & Trusted Distribution | `v1.0` | Proposed |
@@ -326,11 +326,33 @@ worktree cleanly — all without the CLI.
 
 ---
 
-## M10 · Parity: Web, Runtime & Onboarding — `v0.10` — **PROPOSED**
+## ✅ M10 · Parity: Web, Runtime & Onboarding — `v0.10` — **BUILT**
 
 The rest of the CLI surface: sharing, diagnostics and getting started.
 
-1. **Web observer, fully (P1, M).** The app reads `hive web status` and nothing else.
+**Notes from building it**
+
+- **Inline images.** `terminal.graphics` is a byte stream of frames: a big-endian UInt32 length,
+  a UInt32 cell (column in the high 16 bits, row in the low 16), then that many bytes of the
+  kitty or sixel escape sequence the program wrote. It carries only images drawn after it's
+  opened. The app draws each one at its cell in SwiftTerm, which renders kitty graphics and sixel,
+  and reopens the stream when the pane resizes, since a graphics view has no resize of its own.
+  Images don't follow text that the daemon repaints rather than scrolls.
+- **History replay.** `terminal.snapshot` with `scrollback` returns the lines above the screen,
+  oldest first. They're fed into the pane before the first paint, so scrolling up works on a
+  freshly attached pane.
+- **The web observer runs outside the daemon.** The app starts `hive web serve` in the background,
+  and it keeps running after the app quits, as agents do. Stop ends every `hive web serve` of
+  this user, wherever it was started, because `web status` reports no PID.
+- **MCP through the agents' own CLIs.** `claude mcp add --scope user` and `codex mcp add` register
+  Hive's server; OpenCode has no such command, so the app copies its config entry instead.
+- **Not tried against a real host:** *Connect to Host* follows `hive --remote`'s documented
+  behaviour (it asks before installing, `--yes` agrees), but no SSH host was available to run it
+  against.
+- **Fixed on the way:** remote-agent and SSH tabs lost their terminal whenever the tab list
+  changed, and popups lost theirs too; both are now kept like local shells and panes.
+
+1. ✅ **Web observer, fully (P1, M).** *Web Observer…* from the + menu, the command center or Window. The app reads `hive web status` and nothing else.
    - *Share…* creates a one-time sign-in link with a QR code (`web share`). It sets uses, link
      expiry and access expiry, and whether screens and history are shown.
    - A *Grants* list shows who has access and when it ends, with revoke (`web grants`,
@@ -338,13 +360,13 @@ The rest of the CLI surface: sharing, diagnostics and getting started.
    - Start and stop the observer (`web serve`, `web runtime`).
    - Manage phone and browser notifications (`web push`).
    - A live activity feed (`observer.activity`) and a token checker (`observer.validate`).
-2. **Ad-hoc remote hosts (P2, M).** *Connect to Host…* runs against any SSH host without saving it
+2. ✅ **Ad-hoc remote hosts (P2, M).** *Connect to Host…* runs against any SSH host without saving it
    first (`--remote host`). When Hive is missing there, a consent sheet says what will be installed
    before it runs with `--yes`. A *Save as Machine* button turns it into a saved machine.
-3. **Sessions in the window (P2, S).**
+3. ✅ **Sessions in the window (P2, S).**
    - A session switcher in the sidebar footer, instead of only in Settings.
    - `session remove` and `session stop`, with a confirmation that names the agents that stop.
-4. **Diagnostics (P2, M).**
+4. ✅ **Diagnostics (P2, M).** *Help → Diagnostics…*
    - Native runtime status and ping in the connection indicator (`runtime.status`, `runtime.ping`),
      replacing the CLI round trips.
    - A *Diagnostics* window showing memory, goroutines and per-process resource use
@@ -352,12 +374,12 @@ The rest of the CLI surface: sharing, diagnostics and getting started.
    - *Capture Profile…* saves a `pprof` bundle for bug reports (`debug.pprof`).
    - The app reports its round-trip time (`client.report`) so the runtime can size frame and image
      budgets for remote terminals.
-5. **Terminal fidelity (P2, M).**
+5. ✅ **Terminal fidelity (P2, M).**
    - Show inline images that agents draw with the kitty or sixel protocols (`terminal.graphics`).
    - Replay a restored pane's history from `terminal.snapshot` with `scrollback`, which finishes the
      🟡 history-replay item.
    - *Copy Screen* and *Save Scrollback…* in the pane menu.
-6. **Getting started (P2, S).**
+6. ✅ **Getting started (P2, S).**
    - *Try the Demo* in onboarding and the empty state opens four demo agents (`hive demo`).
    - *Connect Agents to Hive* in Settings → Integrations:
      - shows and installs the MCP server entry (`hive mcp`) for Claude Code, Codex and OpenCode;
@@ -454,7 +476,7 @@ holding.
 | Settings and runtime upkeep | ✅ | Validated config editing, sessions, updates, daemon controls, and GC |
 | Environment variables and settings | ✅ | Variables, title and tokens; Hive has no rename |
 | Background processes and logs | ✅ | Processes inspector panel with logs and ports |
-| Web observer sharing and grants | ❌ | Status only; M10 |
+| Web observer sharing and grants | ✅ | Run, share with QR, grants, revoke, audit, Web Push |
 | Plugins | ❌ | M12, skipped for now |
 | Menu bar, actionable notifications, Dock badge, drag and drop | ✅ | Native desktop integrations |
 
@@ -527,8 +549,8 @@ holding.
 | Restore desktop tabs on relaunch | ✅ | — | — |
 | Session save / restore / restore `--fresh` | ✅ | P2 | S |
 | Several sessions (separate daemons) | ✅ | P2 | M |
-| History replay after restore (`session.replay_history`) | 🟡 M10 | P2 | S |
-| Remove or stop a session (`session remove/stop`) | ❌ M10 | P2 | S |
+| History replay after restore (`terminal.snapshot` scrollback) | ✅ M10 | P2 | S |
+| Remove or stop a session (`session remove/stop`) | ✅ M10 | P2 | S |
 | Garbage collection (`gc`, `--dry-run`) | ✅ | P2 | S |
 
 ### Remote machines
@@ -540,18 +562,18 @@ holding.
 | Discover runtimes on the local network, pair, revoke | ✅ | P1 | M |
 | Create remote environments, run agents, attach terminals, SSH shell | ✅ | P1 | M |
 | Observer credentials (create, revoke, audit) | ✅ | P2 | M |
-| Web observer: share links, grants, serve, Web Push (`web share/grants/revoke/serve/push`) | ❌ M10 | P1 | M |
-| Ad-hoc SSH hosts without saving them (`--remote host`) | ❌ M10 | P2 | M |
+| Web observer: share links, grants, serve, Web Push (`web share/grants/revoke/serve/push`) | ✅ M10 | P1 | M |
+| Ad-hoc SSH hosts without saving them (`--remote host`) | ✅ M10 (untested against a live host) | P2 | M |
 
 ### Runtime and onboarding
 
 | TUI / runtime feature | Desktop | Priority | Size |
 | --- | --- | --- | --- |
-| Status, ping, start/stop the daemon, update, `gc` | ✅ through the CLI; native in M10 | P1 | S |
-| Resource use and profiles (`debug stats`, `debug pprof`) | ❌ M10 | P2 | M |
-| Inline terminal graphics (`terminal.graphics`) | ❌ M10 | P2 | M |
-| Demo tab (`hive demo`) | ❌ M10 | P2 | S |
-| MCP server setup (`hive mcp`) and the agent skill (`hive --skill`) | ❌ M10 | P2 | S |
+| Status, ping, start/stop the daemon, update, `gc` | ✅ status and ping native in M10 | P1 | S |
+| Resource use and profiles (`debug stats`, `debug pprof`) | ✅ M10 | P2 | M |
+| Inline terminal graphics (`terminal.graphics`) | ✅ M10 | P2 | M |
+| Demo tab (`hive demo`) | ✅ M10 | P2 | S |
+| MCP server setup (`hive mcp`) and the agent skill (`hive --skill`) | ✅ M10 | P2 | S |
 
 ### Extensibility
 

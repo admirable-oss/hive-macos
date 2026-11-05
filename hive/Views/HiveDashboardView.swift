@@ -123,6 +123,15 @@ struct HiveDashboardView: View {
             .sheet(item: $worktreesRepository) { environment in
                 WorktreesSheet(repository: environment, viewModel: viewModel)
             }
+            .sheet(isPresented: $viewModel.showingWebObserver) {
+                WebObserverSheet(viewModel: viewModel)
+            }
+            .sheet(isPresented: $viewModel.showingDiagnostics) {
+                DiagnosticsSheet(viewModel: viewModel)
+            }
+            .sheet(isPresented: $viewModel.showingConnectHost) {
+                ConnectHostSheet(viewModel: viewModel)
+            }
             .sheet(isPresented: $viewModel.showingShortcuts) {
                 KeyboardShortcutsSheet(viewModel: viewModel)
             }
@@ -268,12 +277,11 @@ struct HiveDashboardView: View {
         var paneIDs: Set<String> = []
         for tab in tabs {
             switch tab.destination {
-            case .scratch:
+            case .scratch, .remote, .remoteShell, .remoteHost:
+                // Remote tabs are local processes too (ssh, `hive … agent attach`), kept per tab.
                 scratchIDs.append(tab.id)
             case .hive(let id):
-                if let hiveTab = viewModel.workspace.tab(id) { paneIDs.formUnion(hiveTab.paneIDs) }
-            case .remote, .remoteShell:
-                break
+                if let hiveTab = viewModel.workspace.tab(id) { paneIDs.formUnion(hiveTab.paneIDs + hiveTab.popupPaneIDs) }
             }
         }
         terminals.retain(scratchTabs: scratchIDs, panes: paneIDs)
@@ -555,6 +563,8 @@ struct HiveDashboardView: View {
         Button { showingDelegation = true } label: { Label("Delegate a helper…", systemImage: "arrow.triangle.branch") }
         Divider()
         Button { showingObservers = true } label: { Label("Observers…", systemImage: "eye") }
+        Button { viewModel.showingWebObserver = true } label: { Label("Web observer…", systemImage: "globe") }
+        Button { viewModel.showingDiagnostics = true } label: { Label("Diagnostics…", systemImage: "stethoscope") }
         Button { showingLayoutManager = true } label: { Label("Workspace layouts…", systemImage: "rectangle.3.group") }
         Button { showingActivity = true } label: { Label("Activity & sessions…", systemImage: "clock.arrow.circlepath") }
         Button { showingUsage = true } label: { Label("Usage & capacity…", systemImage: "gauge.with.dots.needle.33percent") }
@@ -665,6 +675,8 @@ struct HiveDashboardView: View {
             return "\(tab.name) · \(environment.map(displayName) ?? tab.environmentID)"
         case .remote(let machine, _, let title):
             return "\(title) · \(machine)"
+        case .remoteHost(let host, _, let title):
+            return "\(title) · \(host)"
         case .remoteShell(let machine, _):
             return "SSH · \(machine)"
         }
@@ -931,6 +943,8 @@ struct HiveDashboardView: View {
                 StatusIndicator(state: isConnected ? .ready : .idle)
                 Text(isConnected ? "Connected" : "Runtime unavailable")
                     .foregroundStyle(.secondary)
+                    .help(viewModel.workspace.roundTrip.map { "Round trip \(DiagnosticsSheet.milliseconds($0))" } ?? "")
+                SessionSwitcher(viewModel: viewModel)
                 if isConnected && activeAgentCount > 0 {
                     Text("· \(activeAgentCount) active")
                         .monospacedDigit()
@@ -947,6 +961,10 @@ struct HiveDashboardView: View {
                     Divider()
                     Button("Add Machine…") { showingAddMachine = true }
                     Button("Discover Nearby…") { showingNearbyMachines = true }
+                    Button("Connect to Host…") { viewModel.showingConnectHost = true }
+                    Divider()
+                    Button("Web Observer…") { viewModel.showingWebObserver = true }
+                    Button("Try the Demo") { Task { await viewModel.openDemo() } }
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 13))
@@ -1011,6 +1029,13 @@ struct HiveDashboardView: View {
                         },
                         onClose: { viewModel.requestCloseTab(tab.id) }
                     )
+                case .remoteHost(let host, let agentID, _):
+                    TerminalSurface(
+                        session: terminals.scratchSession(for: tab) {
+                            ShellTerminalSession(launch: TerminalLaunch(executable: hiveURL.path, arguments: ["--remote", host, "agent", "attach", agentID], execName: nil, directory: FileManager.default.homeDirectoryForCurrentUser.path))
+                        },
+                        onClose: { viewModel.requestCloseTab(tab.id) }
+                    )
                 case .remoteShell(_, let host):
                     TerminalSurface(
                         session: terminals.scratchSession(for: tab) {
@@ -1022,7 +1047,7 @@ struct HiveDashboardView: View {
             }
             .id(tab.id)
         } else {
-            NoTerminalsView(onNewTerminal: viewModel.newTab)
+            NoTerminalsView(onNewTerminal: viewModel.newTab, onDemo: { Task { await viewModel.openDemo() } })
         }
     }
 
@@ -1044,7 +1069,7 @@ struct HiveDashboardView: View {
                     if let agent = viewModel.agents.first(where: { $0.tabID == id }) { .agent(agent.id) }
                     else if let environmentID = viewModel.workspace.tab(id)?.environmentID { .environment(environmentID) }
                     else { nil }
-                case .scratch, .remote, .remoteShell, nil: nil
+                case .scratch, .remote, .remoteShell, .remoteHost, nil: nil
                 }
             },
             set: { item in
@@ -1490,8 +1515,68 @@ private struct ActiveTerminalInspector: View {
     }
 }
 
+/// The session this window shows, and a menu to switch to another or start a new one.
+/// Each session is its own daemon with its own environments and agents.
+private struct SessionSwitcher: View {
+    @ObservedObject var viewModel: AppViewModel
+    @AppStorage("hive.session.name") private var sessionName = "default"
+    @State private var sessions: [(name: String, running: Bool)] = []
+    @State private var naming = false
+    @State private var newName = ""
+
+    var body: some View {
+        Menu {
+            ForEach(sessions, id: \.name) { session in
+                Button {
+                    sessionName = session.name
+                } label: {
+                    if session.name == viewModel.sessionName {
+                        Label(session.name, systemImage: "checkmark")
+                    } else {
+                        Text(session.name + (session.running ? "" : "  (stopped)"))
+                    }
+                }
+            }
+            Divider()
+            Button("New Session…") { newName = ""; naming = true }
+            SettingsLink { Text("Manage Sessions…") }
+        } label: {
+            Text(viewModel.sessionName)
+                .font(.system(size: 10.5, weight: .semibold))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color.primary.opacity(0.07)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Session: each has its own daemon, environments and agents")
+        .task { await load() }
+        .onHover { if $0 { Task { await load() } } }
+        .alert("New Session", isPresented: $naming) {
+            TextField("Name", text: $newName)
+            Button("Create and Switch") {
+                let name = newName.trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { sessionName = name }
+            }
+            .disabled(newName.trimmingCharacters(in: .whitespaces).range(of: "^[A-Za-z0-9][A-Za-z0-9._-]*$", options: .regularExpression) == nil)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A new session starts empty, with its own daemon. Letters, digits, dots, dashes and underscores.")
+        }
+    }
+
+    private func load() async {
+        struct Session: Decodable { let name: String; let running: Bool }
+        guard let output = try? await viewModel.cliService.run(["--json", "session", "list"]),
+              let list = try? JSONDecoder().decode([Session].self, from: Data(output.utf8)) else { return }
+        sessions = list.map { ($0.name, $0.running) }
+    }
+}
+
 private struct NoTerminalsView: View {
     let onNewTerminal: () -> Void
+    let onDemo: () -> Void
 
     var body: some View {
         VStack(spacing: 13) {
@@ -1505,9 +1590,14 @@ private struct NoTerminalsView: View {
             Text("Pick an environment or agent from the sidebar, or open a shell.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button(action: onNewTerminal) { Label("New Terminal", systemImage: "terminal") }
-                .buttonStyle(.hivePrimary)
-                .padding(.top, 4)
+            HStack(spacing: 8) {
+                Button(action: onNewTerminal) { Label("New Terminal", systemImage: "terminal") }
+                    .buttonStyle(.hivePrimary)
+                Button(action: onDemo) { Label("Try the Demo", systemImage: "sparkles") }
+                    .buttonStyle(.hive)
+                    .help("Opens a tab of four pretend agents to explore with")
+            }
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))

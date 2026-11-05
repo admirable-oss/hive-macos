@@ -210,5 +210,4 @@ struct ObserverManagerView: View {
     }
 }
 
-private struct WebObserverStatus: Decodable { let publicURL: String; enum CodingKeys: String, CodingKey { case publicURL = "public_url" } }
 private enum ObserverError: LocalizedError { case noURL; var errorDescription: String? { "The web observer did not report a public URL." } }

@@ -21,6 +21,8 @@ final class HiveWorkspaceStore: ObservableObject {
     @Published private(set) var metadata: [String: HiveMetadataEntry] = [:]
     @Published private(set) var agentKinds: [HiveAgentManifest] = []
     @Published private(set) var listeningPorts: [String: [ListeningPort]] = [:]
+    /// How long the last `runtime.ping` took there and back.
+    @Published private(set) var roundTrip: Duration?
 
     /// Called after every snapshot is applied, with whether it was the first one.
     var onSnapshot: ((_ isFirst: Bool) -> Void)?
@@ -67,9 +69,52 @@ final class HiveWorkspaceStore: ObservableObject {
             while !Task.isCancelled {
                 await refreshPorts()
                 pruneExpiredMetadata()
+                await measureLink()
                 try? await Task.sleep(for: .seconds(10))
             }
         }
+    }
+
+    /// Times a ping and tells Hive (`client.report`), which sizes frame and image budgets by it.
+    private func measureLink() async {
+        guard let client else { return }
+        let clock = ContinuousClock()
+        let start = clock.now
+        guard (try? await client.call("runtime.ping")) != nil else { return }
+        let elapsed = clock.now - start
+        roundTrip = elapsed
+        let microseconds = max(1, Int(elapsed.components.attoseconds / 1_000_000_000_000) + Int(elapsed.components.seconds) * 1_000_000)
+        _ = try? await call("client.report", ["rtt_us": microseconds])
+    }
+
+    /// Observers connected right now, and how many watch each thing.
+    func observerActivity() async throws -> HiveObserverActivity {
+        try decode(HiveObserverActivity.self, from: try await call("observer.activity", [:]))
+    }
+
+    /// Whether an observer token still works, and whose it is.
+    func validateObserverToken(_ token: String) async throws -> HiveObserverValidation {
+        try decode(HiveObserverValidation.self, from: try await call("observer.validate", ["token": token]))
+    }
+
+    func runtimeStatus() async throws -> HiveRuntimeStatus {
+        try decode(HiveRuntimeStatus.self, from: try await call("runtime.status", [:]))
+    }
+
+    func debugStats() async throws -> HiveDebugStats {
+        try decode(HiveDebugStats.self, from: try await call("debug.stats", [:]))
+    }
+
+    /// A terminal's screen and up to `scrollback` lines above it; `ansi` keeps colours.
+    func terminalSnapshot(processID: String, scrollback: Int, ansi: Bool) async throws -> HiveTerminalSnapshot {
+        try decode(HiveTerminalSnapshot.self, from: try await call("terminal.snapshot", ["process_id": processID, "scrollback": scrollback, "ansi": ansi]))
+    }
+
+    /// The images a terminal's program draws, as framed kitty/sixel sequences (`terminal.graphics`).
+    func openGraphics(processID: String, width: Int, height: Int) async throws -> HivePipe {
+        guard let client else { throw HiveSocketError.disconnected }
+        let params = try JSONSerialization.data(withJSONObject: ["process_id": processID, "width": width, "height": height])
+        return try await client.openPipe("terminal.graphics", params: params).pipe
     }
 
     /// Ports aren't Hive state, so they're scanned rather than streamed.

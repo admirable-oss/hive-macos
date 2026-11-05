@@ -206,6 +206,8 @@ struct SessionSettingsView: View {
     @State private var report: String?
     @State private var errorMessage: String?
     @State private var loading = false
+    @State private var pendingStop: Phase5Session?
+    @State private var pendingRemoval: Phase5Session?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -220,9 +222,33 @@ struct SessionSettingsView: View {
                     VStack(alignment: .leading) { Text(session.name).fontWeight(session.current ? .semibold : .regular); Text(session.root).font(.caption).foregroundStyle(.secondary) }
                     Spacer()
                     Text(session.running ? "Running · PID \(session.pid ?? 0)" : "Stopped").font(.caption).foregroundStyle(session.running ? .green : .secondary)
+                    Menu {
+                        Button("Stop Daemon and Agents…") { pendingStop = session }
+                            .disabled(!session.running)
+                        Button("Remove Session…", role: .destructive) { pendingRemoval = session }
+                            .disabled(session.name == "default")
+                    } label: { Image(systemName: "ellipsis.circle") }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
                 }
             }
             .frame(minHeight: 180)
+            .confirmationDialog("Stop session “\(pendingStop?.name ?? "")”?", isPresented: Binding(get: { pendingStop != nil }, set: { if !$0 { pendingStop = nil } }), titleVisibility: .visible, presenting: pendingStop) { session in
+                Button("Stop Daemon and Agents", role: .destructive) { Task { await runSession(["session", "stop", session.name], label: "Stopped “\(session.name)”."); await refresh() } }
+                Button("Stop Daemon, Keep Agents Running") { Task { await runSession(["session", "stop", session.name, "--keep-agents"], label: "Stopped “\(session.name)”’s daemon; its agents keep running."); await refresh() } }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in Text("Stopping the daemon and its agents ends any work they’re doing. Keeping the agents lets the session’s next daemon pick them up again.") }
+            .confirmationDialog("Remove session “\(pendingRemoval?.name ?? "")”?", isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }), titleVisibility: .visible, presenting: pendingRemoval) { session in
+                Button("Remove Session", role: .destructive) {
+                    Task {
+                        if session.name == sessionName { sessionName = "default" }
+                        await runSession(["session", "remove", session.name], label: "Removed “\(session.name)”.")
+                        await refresh()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in Text("This stops its agents and deletes its environments, logs and managed workspaces. Folders of yours that environments ran in are never touched.") }
             HStack {
                 Button("Refresh") { Task { await refresh() } }
                 Button("Save Current Session") { Task { await runSession(["session", "save"], label: "Session snapshot saved.") } }

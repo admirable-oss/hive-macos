@@ -34,9 +34,22 @@ struct HiveCommands: Commands {
         CommandMenu("Commands") { commandsMenu }
 
         CommandGroup(after: .help) {
-            Button("Keyboard Shortcuts") { viewModel?.showingShortcuts = true }
-                .keyboardShortcut("/")
-                .disabled(viewModel == nil)
+            Group {
+                Button("Keyboard Shortcuts") { viewModel?.showingShortcuts = true }
+                    .keyboardShortcut("/")
+                Button("Try the Demo") { if let viewModel { Task { await viewModel.openDemo() } } }
+                Divider()
+                Button("Diagnostics…") { viewModel?.showingDiagnostics = true }
+            }
+            .disabled(viewModel == nil)
+        }
+
+        CommandGroup(after: .windowArrangement) {
+            Group {
+                Button("Web Observer…") { viewModel?.showingWebObserver = true }
+                Button("Connect to Host…") { viewModel?.showingConnectHost = true }
+            }
+            .disabled(viewModel == nil)
         }
     }
 
