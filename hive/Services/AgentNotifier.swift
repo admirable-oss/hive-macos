@@ -138,6 +138,25 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
         center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
     }
 
+    /// Tells the user an agent watch they set ("notify me when…") has ended, however it ended.
+    func notifyWatchEnded(agent: HiveAgent, condition: String, outcome: String) {
+        let content = UNMutableNotificationContent()
+        content.title = agent.name.isEmpty ? agent.kind : agent.name
+        content.subtitle = agent.environmentID
+        content.body = switch outcome {
+        case "reached": "Now \(condition), as you asked to hear."
+        case "stalled": "Hasn’t changed its screen for a while — it may be stuck."
+        case "blocked": "Stopped to wait for your decision."
+        case "exited": "Exited."
+        default: "Stopped waiting: \(outcome)."
+        }
+        content.categoryIdentifier = agent.state == "blocked" ? Identifier.blockedCategory : Identifier.doneCategory
+        content.sound = .default
+        content.threadIdentifier = agent.environmentID
+        content.userInfo = [Identifier.agentKey: agent.id]
+        center.add(UNNotificationRequest(identifier: "watch-\(agent.id)", content: content, trigger: nil))
+    }
+
     func resetStateTracking() {
         lastStateByAgent.removeAll()
     }

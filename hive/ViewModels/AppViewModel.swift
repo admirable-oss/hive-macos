@@ -21,12 +21,26 @@ final class AppViewModel: ObservableObject {
     enum RenameTarget: Identifiable, Hashable {
         case tab(WorkspaceTab.ID)
         case pane(String)
+        case agent(String)
 
         var id: String {
             switch self {
             case .tab(let id): "tab-\(id)"
             case .pane(let id): "pane-\(id)"
+            case .agent(let id): "agent-\(id)"
             }
+        }
+    }
+
+    /// A "notify me when…" on one agent, running until Hive answers.
+    struct AgentWatch: Hashable {
+        /// idle, done, blocked, exited, or `stall` for "stops changing".
+        let condition: String
+        var stallMinutes: Int?
+
+        var title: String {
+            if let stallMinutes { return "stalls for \(stallMinutes) min" }
+            return "is \(condition)"
         }
     }
 
@@ -65,6 +79,9 @@ final class AppViewModel: ObservableObject {
     @Published var renaming: RenameTarget?
     /// A pane on its way to a new place in its own tab; its tab keeps showing it meanwhile.
     @Published private(set) var rearrangingPaneID: String?
+    /// Agent watches by agent ID.
+    @Published private(set) var agentWatches: [String: AgentWatch] = [:]
+    private var agentWatchTasks: [String: Task<Void, Never>] = [:]
     @Published var showingShortcuts = false
     @Published var showingRunInPopup = false
     /// `[[keys.command]]` from config.toml: commands bound to keys in the TUI.
@@ -614,6 +631,8 @@ final class AppViewModel: ObservableObject {
             return tab.hiveTabID.flatMap(workspace.tab)?.name ?? tab.name ?? ""
         case .pane(let id):
             return workspace.panes[id]?.name ?? ""
+        case .agent(let id):
+            return agents.first(where: { $0.id == id })?.name ?? ""
         }
     }
 
@@ -630,7 +649,99 @@ final class AppViewModel: ObservableObject {
         case .pane(let id):
             guard !name.isEmpty else { return }
             Task { await perform { try await self.workspace.renamePane(id, to: name) } }
+        case .agent(let id):
+            guard !name.isEmpty else { return }
+            Task { await perform { try await self.workspace.renameAgent(id, to: name) } }
         }
+    }
+
+    // MARK: Agent tools
+
+    /// Notifies once the agent reaches `condition`, or stalls for `stallMinutes`. One watch per agent.
+    func watch(agent id: String, condition: String, stallMinutes: Int? = nil) {
+        cancelWatch(agent: id)
+        let watch = AgentWatch(condition: condition, stallMinutes: stallMinutes)
+        agentWatches[id] = watch
+        agentWatchTasks[id] = Task {
+            // A stall watch ends on any state change too, so it waits for "exited" and lets the stall end it.
+            let until = stallMinutes == nil ? condition : "exited"
+            let result = try? await workspace.waitForAgent(id, until: until, stallMilliseconds: stallMinutes.map { $0 * 60_000 })
+            guard !Task.isCancelled else { return }
+            agentWatches[id] = nil
+            agentWatchTasks[id] = nil
+            if let result {
+                notifier.notifyWatchEnded(agent: result.agent, condition: condition, outcome: result.outcome)
+            }
+        }
+    }
+
+    func cancelWatch(agent id: String) {
+        agentWatchTasks[id]?.cancel()
+        agentWatchTasks[id] = nil
+        agentWatches[id] = nil
+    }
+
+    /// Brings the agent's pane to the front in Hive, for the TUI and other clients.
+    func showAgentInTUI(_ id: String) {
+        Task { await perform { try await self.workspace.focusAgent(id) } }
+    }
+
+    /// Sets an agent's state by hand, for agents without hooks. It holds ten minutes unless replaced.
+    func reportAgent(_ id: String, state: String) {
+        Task { await perform { try await self.workspace.reportAgent(id, state: state, message: "Set in Hive Desktop") } }
+    }
+
+    // MARK: Environments and processes
+
+    func updateVariables(of environmentID: String, set: [String: String], unset: [String]) async throws {
+        try await workspace.updateEnvironmentVariables(environmentID, set: set, unset: unset)
+    }
+
+    func clearMetadata(pane: String? = nil, environment: String? = nil) {
+        Task { await perform { try await self.workspace.clearMetadata(pane: pane, environment: environment) } }
+    }
+
+    /// Background processes in an environment: running ones first, then the most recent that ended.
+    func backgroundProcesses(in environmentID: String) -> [HiveProcess] {
+        workspace.processes.values
+            .filter { $0.environmentID == environmentID && !$0.terminal }
+            .sorted { lhs, rhs in
+                if lhs.isRunning != rhs.isRunning { return lhs.isRunning }
+                return (lhs.startedAt ?? "") > (rhs.startedAt ?? "")
+            }
+    }
+
+    func startProcess(in environmentID: String, commandLine: String) async throws -> HiveProcess {
+        try await workspace.startProcess(in: environmentID, commandLine: commandLine)
+    }
+
+    func stopProcess(_ id: String) {
+        Task { await perform { try await self.workspace.stopProcess(id) } }
+    }
+
+    /// Runs the same command again; a running one is stopped first.
+    func restartProcess(_ process: HiveProcess) async throws -> HiveProcess {
+        if process.isRunning {
+            try await workspace.stopProcess(process.id)
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        return try await workspace.startProcess(in: process.environmentID, commandLine: process.commandLine)
+    }
+
+    /// Listening ports that belong to a process, matched by its PID.
+    func ports(of process: HiveProcess) -> [ListeningPort] {
+        (listeningPorts[process.environmentID] ?? []).filter { Int($0.pid) == process.pid }
+    }
+
+    // MARK: Worktrees
+
+    func openWorktree(path: String) async throws {
+        let environment = try await workspace.openWorktree(path: path)
+        openEnvironment(environment.id)
+    }
+
+    func removeWorktree(path: String, force: Bool) async throws {
+        try await workspace.removeWorktree(path: path, force: force)
     }
 
     func renameActiveTab() {

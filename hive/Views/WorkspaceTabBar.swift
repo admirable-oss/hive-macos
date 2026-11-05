@@ -6,6 +6,8 @@ struct WorkspaceTabBar: View {
         let title: String
         /// The tab's name, shown next to its number when it has one.
         var label: String?
+        /// A token one of its panes reported, e.g. `tests 40/40`.
+        var token: HiveMetadataEntry.Token?
     }
 
     let items: [Item]
@@ -25,6 +27,7 @@ struct WorkspaceTabBar: View {
                             number: index + 1,
                             title: item.title,
                             label: item.label,
+                            token: item.token,
                             isActive: item.id == activeID,
                             isRenaming: renamingID == item.id,
                             canClose: true,
@@ -71,6 +74,7 @@ private struct WorkspaceTabButton: View {
     let number: Int
     let title: String
     let label: String?
+    let token: HiveMetadataEntry.Token?
     let isActive: Bool
     let isRenaming: Bool
     let canClose: Bool
@@ -117,6 +121,9 @@ private struct WorkspaceTabButton: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: 110, alignment: .leading)
+                }
+                if let token, !isRenaming {
+                    MetadataTokens(tokens: [token], limit: 1)
                 }
             }
             .contentShape(Rectangle())

@@ -70,6 +70,8 @@ struct HiveEnvironment: Decodable, Identifiable, Hashable {
     let status: String
     var git: HiveGitStatus?
     var worktree: HiveWorktree?
+    /// Variables every new process in the environment gets (`hive environment set`).
+    var env: [String: String]?
 }
 
 struct HiveWorktree: Decodable, Hashable {

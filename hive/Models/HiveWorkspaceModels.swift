@@ -113,18 +113,81 @@ struct HiveProcess: Decodable, Identifiable, Hashable {
     let id: String
     let environmentID: String
     let command: String
+    let args: [String]?
     let workingDirectory: String
     let pid: Int
     let status: String
     let terminal: Bool
     let exitCode: Int?
+    let startedAt: String?
+    let endedAt: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, command, pid, status, terminal
+        case id, command, args, pid, status, terminal
         case environmentID = "environment_id"
         case workingDirectory = "working_dir"
         case exitCode = "exit_code"
+        case startedAt = "started_at"
+        case endedAt = "ended_at"
     }
+
+    var isRunning: Bool { status == "running" }
+
+    /// The command as typed: an `env K=V… sh -lc "…"` wrapper shows just what it runs.
+    var commandLine: String {
+        let args = args ?? []
+        if let flag = args.firstIndex(where: { $0 == "-lc" || $0 == "-c" }), flag + 1 < args.count {
+            return args[flag + 1]
+        }
+        return ([command] + args).joined(separator: " ")
+    }
+}
+
+/// Titles and tokens a pane or environment reports (`hive pane report-metadata`), shown beside it.
+struct HiveMetadataEntry: Decodable, Hashable {
+    struct Token: Decodable, Hashable {
+        let key: String
+        let text: String
+        let until: String?
+    }
+
+    let environment: String?
+    let pane: String?
+    let title: String?
+    let titleUntil: String?
+    let tokens: [Token]
+
+    enum CodingKeys: String, CodingKey {
+        case environment, pane, title, tokens
+        case titleUntil = "title_until"
+    }
+
+    /// `pane:<id>` or `environment:<id>`.
+    var key: String {
+        if let pane { return "pane:\(pane)" }
+        return "environment:\(environment ?? "")"
+    }
+}
+
+/// One checkout of a repository (`hive worktree list`).
+struct HiveWorktreeInfo: Decodable, Hashable, Identifiable {
+    let path: String
+    let branch: String?
+    let head: String?
+    let main: Bool?
+    let bare: Bool?
+    let detached: Bool?
+    let locked: Bool?
+    /// The environments rooted in it.
+    let environments: [String]?
+
+    var id: String { path }
+}
+
+/// How an `agent.wait` ended: reached, timeout, blocked, stalled or exited.
+struct HiveAgentWaitResult: Decodable {
+    let outcome: String
+    let agent: HiveAgent
 }
 
 struct HiveDaemonInfo: Decodable, Hashable {

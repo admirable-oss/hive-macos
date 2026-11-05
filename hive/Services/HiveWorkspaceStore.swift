@@ -17,6 +17,8 @@ final class HiveWorkspaceStore: ObservableObject {
     @Published private(set) var tabs: [HiveTab] = []
     @Published private(set) var panes: [String: HivePane] = [:]
     @Published private(set) var processes: [String: HiveProcess] = [:]
+    /// Titles and tokens by `pane:<id>` or `environment:<id>`, expired ones dropped.
+    @Published private(set) var metadata: [String: HiveMetadataEntry] = [:]
     @Published private(set) var agentKinds: [HiveAgentManifest] = []
     @Published private(set) var listeningPorts: [String: [ListeningPort]] = [:]
 
@@ -64,6 +66,7 @@ final class HiveWorkspaceStore: ObservableObject {
         portScanTask = Task {
             while !Task.isCancelled {
                 await refreshPorts()
+                pruneExpiredMetadata()
                 try? await Task.sleep(for: .seconds(10))
             }
         }
@@ -150,6 +153,9 @@ final class HiveWorkspaceStore: ObservableObject {
         tabs = snapshot.tabs
         panes = Dictionary(snapshot.panes.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         processes = Dictionary(snapshot.processes.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
+        if let entries = try? decode([HiveMetadataEntry].self, from: try await client.call("metadata.list")) {
+            metadata = Dictionary(entries.map { ($0.key, $0) }, uniquingKeysWith: { $1 })
+        }
         connection = .connected(version: snapshot.daemon.version, apiLevel: snapshot.daemon.apiLevel)
 
         let isFirst = !hasSnapshot
@@ -213,6 +219,9 @@ final class HiveWorkspaceStore: ObservableObject {
                 }
             case "process.output":
                 break
+            case "metadata.changed":
+                let entry = try decode(HiveMetadataEntry.self, from: data)
+                metadata[entry.key] = entry.tokens.isEmpty && (entry.title ?? "").isEmpty ? nil : entry
             default:
                 // events_lost, or something this build doesn't model yet.
                 scheduleSnapshot()
@@ -268,6 +277,109 @@ final class HiveWorkspaceStore: ObservableObject {
         return environment
     }
 
+    /// Sets and removes variables every new process in the environment gets.
+    func updateEnvironmentVariables(_ id: String, set: [String: String], unset: [String]) async throws {
+        var params: [String: Any] = ["id": id]
+        if !set.isEmpty { params["set"] = set }
+        if !unset.isEmpty { params["unset"] = unset }
+        upsert(try decode(HiveEnvironment.self, from: try await call("environment.update", params)), into: &environments)
+    }
+
+    /// What a pane reported, without anything past its TTL.
+    func metadata(forPane id: String) -> (title: String?, tokens: [HiveMetadataEntry.Token]) {
+        Self.live(metadata["pane:\(id)"])
+    }
+
+    func metadata(forEnvironment id: String) -> (title: String?, tokens: [HiveMetadataEntry.Token]) {
+        Self.live(metadata["environment:\(id)"])
+    }
+
+    private static func live(_ entry: HiveMetadataEntry?) -> (title: String?, tokens: [HiveMetadataEntry.Token]) {
+        guard let entry else { return (nil, []) }
+        let now = Date()
+        let title = entry.title.flatMap { $0.isEmpty || isPast(entry.titleUntil, now) ? nil : $0 }
+        return (title, entry.tokens.filter { !$0.text.isEmpty && !isPast($0.until, now) })
+    }
+
+    private static func isPast(_ timestamp: String?, _ now: Date) -> Bool {
+        guard let timestamp, let date = parseDate(timestamp) else { return false }
+        return date < now
+    }
+
+    nonisolated static func parseDate(_ string: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: string) ?? ISO8601DateFormatter().date(from: string)
+    }
+
+    /// Reporters stop by letting their TTL lapse, so expired entries go without an event.
+    private func pruneExpiredMetadata() {
+        let stale = metadata.filter { _, entry in
+            let live = Self.live(entry)
+            return live.title == nil && live.tokens.isEmpty
+        }
+        for key in stale.keys { metadata[key] = nil }
+    }
+
+    /// Clears what a pane or an environment reported (`metadata.report` with `clear`).
+    func clearMetadata(pane: String? = nil, environment: String? = nil) async throws {
+        var params: [String: Any] = ["clear": true, "source": "hive-desktop"]
+        if let pane { params["pane"] = pane }
+        if let environment { params["environment"] = environment }
+        _ = try await call("metadata.report", params)
+        metadata[pane.map { "pane:\($0)" } ?? "environment:\(environment ?? "")"] = nil
+    }
+
+    // MARK: Processes
+
+    /// Starts a command in the background: no terminal, its output kept as a log.
+    ///
+    /// Hive (1.3) records `env` for a process without a terminal but doesn't apply it, and doesn't
+    /// add the environment's variables either, so they're also set through `/usr/bin/env`.
+    func startProcess(in environmentID: String, commandLine: String) async throws -> HiveProcess {
+        let shell = ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
+        let variables = environments.first(where: { $0.id == environmentID })?.env ?? [:]
+        let assignments = variables.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        let process = try decode(HiveProcess.self, from: try await call("process.start", [
+            "environment_id": environmentID, "command": "/usr/bin/env",
+            "args": assignments + [shell, "-lc", commandLine], "env": variables,
+            "terminal": false, "width": 120, "height": 40,
+        ]))
+        processes[process.id] = process
+        return process
+    }
+
+    func stopProcess(_ id: String) async throws {
+        _ = try await call("process.stop", ["id": id])
+    }
+
+    /// The end of a process's log: `tail` lines (0 for all) of stdout or stderr.
+    func processLogs(_ id: String, stderr: Bool = false, tail: Int = 500) async throws -> String {
+        struct Logs: Decodable { let logs: String }
+        var params: [String: Any] = ["id": id, "tail": tail]
+        if stderr { params["stream"] = "stderr" }
+        return try decode(Logs.self, from: try await call("process.logs", params)).logs
+    }
+
+    // MARK: Worktrees
+
+    func worktrees(ofRepository path: String) async throws -> [HiveWorktreeInfo] {
+        try decode([HiveWorktreeInfo].self, from: try await call("worktree.list", ["repo": path]))
+    }
+
+    /// Gives an existing checkout an environment, or returns the one it has.
+    func openWorktree(path: String) async throws -> HiveEnvironment {
+        let environment = try decode(HiveEnvironment.self, from: try await call("worktree.open", ["path": path]))
+        upsert(environment, into: &environments)
+        return environment
+    }
+
+    /// Stops its agents, removes the environments rooted in it, then the checkout; the branch stays.
+    func removeWorktree(path: String, force: Bool) async throws {
+        _ = try await call("worktree.remove", ["path": path, "force": force])
+        scheduleSnapshot()
+    }
+
     func removeEnvironment(_ id: String) async throws {
         _ = try await call("environment.remove", ["id": id])
         environments.removeAll { $0.id == id }
@@ -281,6 +393,34 @@ final class HiveWorkspaceStore: ObservableObject {
         // The new pane's process arrives with the snapshot; attach needs it.
         scheduleSnapshot()
         return started.agent
+    }
+
+    func renameAgent(_ id: String, to name: String) async throws {
+        upsert(try decode(HiveAgent.self, from: try await call("agent.rename", ["id": id, "name": name])), into: &agents)
+    }
+
+    /// What the agent shows, as plain text: `visible`, `recent`, `recent-unwrapped` or `history`.
+    func readAgent(_ id: String, source: String, lines: Int) async throws -> [String] {
+        try decode([String].self, from: try await call("agent.read", ["id": id, "source": source, "lines": lines]))
+    }
+
+    /// Waits until the agent is `until` (idle, done, working, blocked, exited, change), or stalls.
+    func waitForAgent(_ id: String, until: String, stallMilliseconds: Int? = nil) async throws -> HiveAgentWaitResult {
+        var params: [String: Any] = ["id": id, "until": until]
+        if let stallMilliseconds { params["stall_ms"] = stallMilliseconds }
+        return try decode(HiveAgentWaitResult.self, from: try await call("agent.wait", params))
+    }
+
+    /// Brings the agent's pane to the front in Hive, so the TUI shows it.
+    func focusAgent(_ id: String) async throws {
+        _ = try await call("agent.focus", ["id": id])
+    }
+
+    /// Says what the agent is doing, for agents without hooks; it holds for `ttl` unless replaced.
+    func reportAgent(_ id: String, state: String, message: String?) async throws {
+        var params: [String: Any] = ["id": id, "state": state, "ttl_ms": 10 * 60 * 1000]
+        if let message, !message.isEmpty { params["message"] = message }
+        upsert(try decode(HiveAgent.self, from: try await call("agent.report", params)), into: &agents)
     }
 
     func stopAgent(_ id: String) async throws {

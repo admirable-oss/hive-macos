@@ -42,6 +42,8 @@ struct HiveDashboardView: View {
     @State private var delegationParentID: String?
     @State private var reviewEnvironment: HiveEnvironment?
     @State private var requestedChangePath: String?
+    @State private var environmentSettings: HiveEnvironment?
+    @State private var worktreesRepository: HiveEnvironment?
     /// The detail column's width, which the toolbar's actions have to fit beside the tabs.
     @State private var detailWidth: CGFloat = .infinity
 
@@ -115,6 +117,12 @@ struct HiveDashboardView: View {
             .modifier(QuickOpenOverlay(showing: $viewModel.showingQuickOpen, viewModel: viewModel))
             .modifier(PendingCloseDialog(pending: $viewModel.pendingClose, confirm: viewModel.confirm))
             .modifier(PaneRenameDialog(viewModel: viewModel))
+            .sheet(item: $environmentSettings) { environment in
+                EnvironmentSettingsSheet(environment: environment, viewModel: viewModel)
+            }
+            .sheet(item: $worktreesRepository) { environment in
+                WorktreesSheet(repository: environment, viewModel: viewModel)
+            }
             .sheet(isPresented: $viewModel.showingShortcuts) {
                 KeyboardShortcutsSheet(viewModel: viewModel)
             }
@@ -277,7 +285,7 @@ struct HiveDashboardView: View {
     private var workspaceToolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             WorkspaceTabBar(
-                items: viewModel.tabs.map { WorkspaceTabBar.Item(id: $0.id, title: title(for: $0), label: label(for: $0)) },
+                items: viewModel.tabs.map { WorkspaceTabBar.Item(id: $0.id, title: title(for: $0), label: label(for: $0), token: token(for: $0)) },
                 activeID: $viewModel.activeTabID,
                 renamingID: Binding(
                     get: { if case .tab(let id) = viewModel.renaming { id } else { nil } },
@@ -370,7 +378,7 @@ struct HiveDashboardView: View {
 
         /// Thresholds leave the tab strip about 220pt beside each layout.
         init(width: CGFloat) {
-            self = width >= 720 ? .full : width >= 590 ? .compact : .minimal
+            self = width >= 750 ? .full : width >= 620 ? .compact : .minimal
         }
     }
 
@@ -634,6 +642,13 @@ struct HiveDashboardView: View {
         return title(for: tab.destination)
     }
 
+    /// The first token a pane in the tab reported, the focused pane's if it has one.
+    private func token(for tab: WorkspaceTab) -> HiveMetadataEntry.Token? {
+        guard let hiveTab = tab.hiveTabID.flatMap(viewModel.workspace.tab) else { return nil }
+        let panes = [hiveTab.focused].compactMap { $0 } + hiveTab.paneIDs
+        return panes.lazy.compactMap { viewModel.workspace.metadata(forPane: $0).tokens.first }.first
+    }
+
     /// The short name on a tab pill: the Hive tab's name, or one given here.
     private func label(for tab: WorkspaceTab) -> String? {
         if let id = tab.hiveTabID { return viewModel.workspace.tab(id)?.name }
@@ -669,7 +684,7 @@ struct HiveDashboardView: View {
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
                     
                     ForEach(localEnvironments) { environment in
-                        EnvironmentSidebarRow(environment: environment, ports: viewModel.listeningPorts[environment.id] ?? [])
+                        EnvironmentSidebarRow(environment: environment, ports: viewModel.listeningPorts[environment.id] ?? [], reported: viewModel.workspace.metadata(forEnvironment: environment.id))
                             .tag(SidebarItem.environment(environment.id))
                             .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
                             .contextMenu { environmentMenu(environment) }
@@ -801,6 +816,22 @@ struct HiveDashboardView: View {
         if environment.worktree == nil {
             Button("New Worktree…") { worktreeRepository = environment }
         }
+        if environment.worktree != nil || environment.git != nil {
+            Button("Worktrees…") { worktreesRepository = environment }
+        }
+
+        Divider()
+
+        Button("Environment Settings…") { environmentSettings = environment }
+        Button("Processes") {
+            viewModel.openEnvironment(environment.id)
+            lastInspectorPanel = .processes
+            withAnimation(.easeInOut(duration: 0.2)) { inspectorPanel = .processes }
+        }
+        if !viewModel.workspace.metadata(forEnvironment: environment.id).tokens.isEmpty
+            || viewModel.workspace.metadata(forEnvironment: environment.id).title != nil {
+            Button("Clear Title and Tokens") { viewModel.clearMetadata(environment: environment.id) }
+        }
 
         Divider()
 
@@ -838,6 +869,18 @@ struct HiveDashboardView: View {
         Button("Open") { viewModel.openAgent(agent.id) }
         Button("New Hive Tab in \(agent.environmentID)") { Task { await viewModel.newHiveTab(in: agent.environmentID) } }
         Button("Delegate Helper…") { delegationParentID = agent.id; showingDelegation = true }
+        Button("Rename Agent…") { viewModel.renaming = .agent(agent.id) }
+        Button("Show in TUI") { viewModel.showAgentInTUI(agent.id) }
+
+        Divider()
+
+        AgentWatchMenu(agent: agent, viewModel: viewModel)
+        Menu("Mark As") {
+            ForEach(["working", "blocked", "idle", "done"], id: \.self) { state in
+                Button(agentStateTitle(state)) { viewModel.reportAgent(agent.id, state: state) }
+            }
+        }
+        .help("Set its state by hand for ten minutes, for agents without hooks")
 
         Divider()
 
@@ -1084,21 +1127,30 @@ private struct EnvironmentRemovalDialog: ViewModifier {
     }
 }
 
-/// Asks for a pane's new name. Tabs are renamed in place on the tab bar instead.
+/// Asks for a pane's or an agent's new name. Tabs are renamed in place on the tab bar instead.
 private struct PaneRenameDialog: ViewModifier {
     @ObservedObject var viewModel: AppViewModel
     @State private var name = ""
 
-    private var paneID: String? {
-        if case .pane(let id) = viewModel.renaming { id } else { nil }
+    /// The rename this dialog handles: panes and agents.
+    private var target: AppViewModel.RenameTarget? {
+        switch viewModel.renaming {
+        case .pane, .agent: viewModel.renaming
+        default: nil
+        }
+    }
+
+    private var title: String {
+        if case .agent = target { return "Rename Agent" }
+        return "Rename Pane"
     }
 
     func body(content: Content) -> some View {
         content
-            .alert("Rename Pane", isPresented: Binding(get: { paneID != nil }, set: { if !$0 { viewModel.renaming = nil } })) {
+            .alert(title, isPresented: Binding(get: { target != nil }, set: { if !$0 { viewModel.renaming = nil } })) {
                 TextField("Name", text: $name)
                 Button("Rename") {
-                    if let paneID { viewModel.rename(.pane(paneID), to: name) }
+                    if let target { viewModel.rename(target, to: name) }
                     viewModel.renaming = nil
                 }
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1106,10 +1158,38 @@ private struct PaneRenameDialog: ViewModifier {
             } message: {
                 Text("Hive shows this name here, in the TUI and in other clients.")
             }
-            .onChange(of: viewModel.renaming) { _, target in
-                if let target, case .pane = target { name = viewModel.currentName(of: target) }
+            .onChange(of: viewModel.renaming) { _, _ in
+                if let target { name = viewModel.currentName(of: target) }
             }
     }
+}
+
+/// "Notify me when…" for one agent, or the watch already running with a way to cancel it.
+struct AgentWatchMenu: View {
+    let agent: HiveAgent
+    @ObservedObject var viewModel: AppViewModel
+
+    var body: some View {
+        if let watch = viewModel.agentWatches[agent.id] {
+            Button("Stop Notifying When It \(watch.title.capitalizedFirst)") { viewModel.cancelWatch(agent: agent.id) }
+        } else {
+            Menu("Notify Me When…") {
+                Button("It Finishes a Turn") { viewModel.watch(agent: agent.id, condition: "done") }
+                Button("It’s Ready for a Prompt") { viewModel.watch(agent: agent.id, condition: "idle") }
+                Button("It Needs a Decision") { viewModel.watch(agent: agent.id, condition: "blocked") }
+                Button("It Exits") { viewModel.watch(agent: agent.id, condition: "exited") }
+                Divider()
+                ForEach([5, 10, 30], id: \.self) { minutes in
+                    Button("Its Screen Stalls for \(minutes) Minutes") { viewModel.watch(agent: agent.id, condition: "stall", stallMinutes: minutes) }
+                }
+            }
+            .disabled(agent.state == "exited")
+        }
+    }
+}
+
+extension String {
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }
 
 private struct PendingCloseDialog: ViewModifier {
@@ -1225,6 +1305,8 @@ private struct SidebarEmptyState: View {
 private struct EnvironmentSidebarRow: View {
     let environment: HiveEnvironment
     let ports: [ListeningPort]
+    /// The title and tokens reported about the environment.
+    var reported: (title: String?, tokens: [HiveMetadataEntry.Token]) = (nil, [])
 
     private var branch: String? {
         environment.git?.branch
@@ -1241,13 +1323,24 @@ private struct EnvironmentSidebarRow: View {
             EnvironmentAvatar(name: environment.name.isEmpty ? environment.id : environment.name)
                 .frame(width: 20)
 
-            Text(environment.name.isEmpty ? environment.id : environment.name)
-                .font(.system(size: 13, weight: .regular))
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(environment.name.isEmpty ? environment.id : environment.name)
+                    .font(.system(size: 13, weight: .regular))
+                    .lineLimit(1)
+                if let title = reported.title {
+                    Text(title)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
 
             Spacer(minLength: 4)
 
             HStack(alignment: .center, spacing: 6) {
+                if !reported.tokens.isEmpty {
+                    MetadataTokens(tokens: reported.tokens, limit: 1)
+                }
                 if let branch {
                     Text(branch)
                         .font(.system(size: 11, design: .monospaced))

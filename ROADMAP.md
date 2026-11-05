@@ -25,7 +25,7 @@ clear path from parallel work to reviewed changes.
 | M6 Review Cockpit & Changes | `v0.6` | ✅ Live |
 | M7 Personal Command Center | `v0.7` | ✅ Live |
 | M8 Parity: Workspace Control | `v0.8` | 🟡 In progress (6 of 7) |
-| M9 Parity: Environments, Processes & Agents | `v0.9` | Proposed |
+| M9 Parity: Environments, Processes & Agents | `v0.9` | ✅ Built (2026-11-05) |
 | M10 Parity: Web, Runtime & Onboarding | `v0.10` | Proposed |
 | M11 macOS Automation & Handoff | `v0.11` | Proposed |
 | M12 Extensibility & Plugin Surfaces | `v0.12` | Skipped for now |
@@ -268,15 +268,29 @@ at once.
 
 ---
 
-## M9 · Parity: Environments, Processes & Agents — `v0.9` — **PROPOSED**
+## ✅ M9 · Parity: Environments, Processes & Agents — `v0.9` — **BUILT**
 
 The environment and agent commands of the CLI, without leaving the app.
 
-1. **Environment settings (P1, M).** An *Environment Settings…* sheet from the sidebar:
-   - rename it and edit its fields (`environment.update` with `set` and `unset`);
+**Notes from building it**
+
+- **No rename.** Hive has no way to rename an environment or change its path; `environment.update`
+  only sets and unsets variables. The settings sheet shows the name, ID and path read-only.
+- **Variables and background processes.** In Hive 1.3, an environment's variables reach panes and
+  agents but not processes started without a terminal (`hive process start`). Passing `env` to
+  `process.start` doesn't help either: Hive records it but doesn't apply it. The app wraps
+  background commands in `/usr/bin/env K=V…` so they get the variables, and keeps sending `env`
+  for when Hive applies it. This should be reported upstream.
+- **Logs are polled.** Processes without a terminal send no `process.output` events, so the logs
+  viewer polls `process.logs` every second while the process runs.
+- **Metadata events.** Titles and tokens arrive as `metadata.changed` events. Reporters stop by
+  letting their TTL lapse, so the app also drops expired entries itself.
+
+1. ✅ **Environment settings (P1, M).** An *Environment Settings…* sheet from the sidebar:
+   - its ID, branch and path, read-only (Hive can't rename an environment);
    - edit the variables every new process gets (`hive environment set/unset KEY=VALUE`), with values
      masked by default and a warning that running processes keep their old values.
-2. **Processes and logs (P1, L).** Hive runs more than agents, and the app shows none of it.
+2. ✅ **Processes and logs (P1, L).** A fourth inspector panel, *Processes*. Hive runs more than agents, and the app shows none of it.
    - A *Processes* section per environment (`process.list`), kept live from the `process.started`,
      `process.exited` and `process.recovered` events the store already decodes.
    - *Start Process…* starts a command with or without a terminal, for dev servers and watchers
@@ -284,14 +298,14 @@ The environment and agent commands of the CLI, without leaving the app.
    - A logs viewer with follow, stdout/stderr filters and search (`process.logs` with `follow`,
      `stream` and `tail`, or `process.logs.stream`).
    - Stop and restart (`process.stop`).
-   - Link each process to the ports it listens on, so *Kill Ports* names the process it stops.
-3. **Titles and tokens (P1, M).** The roadmap listed these as shipped, but the app never reads
+   - Each process shows the ports it listens on, and a click opens them in the browser.
+3. ✅ **Titles and tokens (P1, M).** The roadmap listed these as shipped, but the app never reads
    them.
    - Read `metadata.list` and follow its updates.
    - Show pane titles and tokens (branch, PR, test status, cost) as chips on pane title strips, tab
      pills and sidebar environments, the way the TUI's status line does.
    - `metadata.report` lets the app clear stale tokens.
-4. **Agent tools (P1, M).**
+4. ✅ **Agent tools (P1, M).** In the agent inspector and the sidebar's agent menu.
    - *Rename Agent…* (`agent.rename`).
    - *Transcript* in the agent inspector: the agent's recent output as text, with copy and save
      (`agent.read` with `lines` and `source`).
@@ -299,7 +313,7 @@ The environment and agent commands of the CLI, without leaving the app.
      (`agent.wait` with `until` and `stall_ms`).
    - *Show in TUI* (`agent.focus`).
    - *Mark as…* sets an agent's state by hand when its hooks aren't installed (`agent.report`).
-5. **Worktree lifecycle (P1, M).** Today the app only creates worktrees, and removing their
+5. ✅ **Worktree lifecycle (P1, M).** A *Worktrees…* sheet from any repository environment. Today the app only creates worktrees, and removing their
    environment leaves the checkout on disk.
    - List a repository's worktrees, including ones without an environment (`worktree.list`).
    - Open an existing checkout as an environment (`worktree.open`).
@@ -438,8 +452,8 @@ holding.
 | Kill listening ports per environment | ✅ | Desktop only |
 | Remote machines and observers | ✅ | Pairing, status, remote terminals, and observer credentials |
 | Settings and runtime upkeep | ✅ | Validated config editing, sessions, updates, daemon controls, and GC |
-| Environment variables and settings | ❌ | M9 |
-| Background processes and logs | ❌ | M9 |
+| Environment variables and settings | ✅ | Variables, title and tokens; Hive has no rename |
+| Background processes and logs | ✅ | Processes inspector panel with logs and ports |
 | Web observer sharing and grants | ❌ | Status only; M10 |
 | Plugins | ❌ | M12, skipped for now |
 | Menu bar, actionable notifications, Dock badge, drag and drop | ✅ | Native desktop integrations |
@@ -458,7 +472,7 @@ holding.
 | Zoom and close panes | ✅ | P0 | S |
 | Jump to tab 1–9, next/previous tab | ✅ | P0 | S |
 | Rename tabs and panes (`tab rename`, `pane rename`) | ✅ M8 | P0 | S |
-| Pane and environment titles and tokens (`metadata`) | ❌ M9 | P1 | M |
+| Pane and environment titles and tokens (`metadata`) | ✅ M9 | P1 | M |
 | Popups (`pane popup`), floating panes | ✅ M8 | P1 | M |
 | Move a pane to another tab or environment, swap panes (`pane move`, `pane swap`) | ✅ M8 | P1 | M |
 | Active tab follows between clients (`tab focus`) | ✅ M8 | P1 | S |
@@ -480,10 +494,10 @@ holding.
 | Send keys (approve / deny a blocked agent: `y`, Enter, Esc) | ✅ | P0 | S |
 | Install agent hooks for precise state and resume (`integration install`) | ✅ | P1 | S |
 | Resume a conversation (session ID or latest) | ✅ | P1 | S |
-| Rename an agent (`agent rename`) | ❌ M9 | P2 | S |
-| Read an agent's output as text (`agent read`) | ❌ M9 | P1 | S |
-| Wait for a state or a stall (`agent wait --until`, `stall_ms`) | 🟡 M9 | P1 | S |
-| Report a state by hand (`agent report`), focus in the TUI (`agent focus`) | ❌ M9 | P2 | S |
+| Rename an agent (`agent rename`) | ✅ M9 | P2 | S |
+| Read an agent's output as text (`agent read`) | ✅ M9 | P1 | S |
+| Wait for a state or a stall (`agent wait --until`, `stall_ms`) | ✅ M9 | P1 | S |
+| Report a state by hand (`agent report`), focus in the TUI (`agent focus`) | ✅ M9 | P2 | S |
 | Paste or drop an image into an agent | ✅ | P0 | M |
 | Agent manifests (which CLIs Hive knows) | ✅ | P2 | S |
 
@@ -492,16 +506,16 @@ holding.
 | TUI / runtime feature | Desktop | Priority | Size |
 | --- | --- | --- | --- |
 | Create and remove environments | ✅ | P0 | S |
-| Edit an environment, set and unset its variables (`environment update/set/unset`) | ❌ M9 | P1 | M |
-| List, start and stop processes (`process list/start/stop`) | ❌ M9 | P1 | M |
-| Process logs, following (`process logs --follow`) | ❌ M9 | P1 | M |
+| Set and unset an environment's variables (`environment update/set/unset`) | ✅ M9 | P1 | M |
+| List, start and stop processes (`process list/start/stop`) | ✅ M9 | P1 | M |
+| Process logs, following (`process logs --follow`) | ✅ M9 (polled) | P1 | M |
 
 ### Worktrees and tasks
 
 | TUI / runtime feature | Desktop | Priority | Size |
 | --- | --- | --- | --- |
 | Worktree create (an agent per branch) | ✅ | P1 | M |
-| Worktree list / open / remove (`worktree list/open/remove`) | ❌ M9 | P1 | M |
+| Worktree list / open / remove (`worktree list/open/remove`) | ✅ M9 | P1 | M |
 | Tasks: run a plan, approve, cancel, retry, wait, report | ✅ | P1 | L |
 | Plan report: per-task outcome, changed files, summary | ✅ | P1 | M |
 

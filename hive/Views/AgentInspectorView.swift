@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The inspector's Agent panel: what the active tab's agent is doing and why, a way to
 /// answer it when it's blocked, and a prompt box.
@@ -25,8 +26,10 @@ struct AgentInspectorView: View {
                     if isBlocked { decision }
                     details
                     if let verdict = explanation?.verdict { why(verdict) }
+                    if !isExited { watchRow }
                     if !isExited { composer }
                     if let reply { replyView(reply) }
+                    AgentTranscriptView(agent: agent, viewModel: viewModel)
                     footer
                 }
                 .padding(14)
@@ -43,8 +46,13 @@ struct AgentInspectorView: View {
                 .frame(width: 34, height: 34)
                 .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.06)))
             VStack(alignment: .leading, spacing: 3) {
-                Text(agent.name.isEmpty ? agent.kind : agent.name)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                HStack(spacing: 4) {
+                    Text(agent.name.isEmpty ? agent.kind : agent.name)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    Button { viewModel.renaming = .agent(agent.id) } label: { Image(systemName: "pencil") }
+                        .buttonStyle(HiveIconButtonStyle(size: 20))
+                        .help("Rename agent")
+                }
                 HStack(spacing: 6) {
                     HiveChip(
                         text: agentStateTitle(agent.state),
@@ -144,6 +152,38 @@ struct AgentInspectorView: View {
         }
     }
 
+    /// "Notify me when…": a watch on this agent that ends in a notification.
+    private var watchRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: viewModel.agentWatches[agent.id] == nil ? "bell" : "bell.badge.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(viewModel.agentWatches[agent.id] == nil ? Color.secondary : Color.hiveAmber)
+                .contentTransition(.symbolEffect(.replace))
+            if let watch = viewModel.agentWatches[agent.id] {
+                Text("You’ll be notified when it \(watch.title).")
+                    .font(.system(size: 12))
+                Spacer()
+                Button("Cancel") { viewModel.cancelWatch(agent: agent.id) }
+                    .buttonStyle(.hiveCompact)
+            } else {
+                Text("Notify me when it…")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Menu {
+                    AgentWatchMenu(agent: agent, viewModel: viewModel)
+                } label: {
+                    Text("Choose")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.hiveCompact)
+                .fixedSize()
+            }
+        }
+        .hiveCard(padding: 10, tint: viewModel.agentWatches[agent.id] == nil ? nil : .hiveAmber)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: viewModel.agentWatches[agent.id])
+    }
+
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
             HiveSectionTitle(title: "Prompt", symbol: "text.bubble")
@@ -193,6 +233,25 @@ struct AgentInspectorView: View {
         HStack {
             Button { viewModel.openAgent(agent.id) } label: { Label("Show Pane", systemImage: "terminal") }
                 .buttonStyle(.hiveCompact)
+            Menu {
+                Button("Show in TUI") { viewModel.showAgentInTUI(agent.id) }
+                Menu("Mark As") {
+                    ForEach(["working", "blocked", "idle", "done"], id: \.self) { state in
+                        Button(agentStateTitle(state)) { viewModel.reportAgent(agent.id, state: state) }
+                    }
+                }
+                Divider()
+                Button("Copy Agent ID") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(agent.id, forType: .string)
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+            }
+            .menuIndicator(.hidden)
+            .buttonStyle(HiveIconButtonStyle(size: 24))
+            .fixedSize()
+            .help("More")
             Spacer()
             if isExited {
                 Button { Task { await viewModel.resumeAgent(agent.id) } } label: { Label("Resume Agent", systemImage: "play.fill") }
@@ -230,5 +289,104 @@ struct AgentInspectorView: View {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: string) ?? ISO8601DateFormatter().date(from: string)
+    }
+}
+
+/// What the agent shows, as plain text: its screen, or the screen and what scrolled off it.
+/// Loaded on request, since a long history is a lot to pull for every glance.
+private struct AgentTranscriptView: View {
+    let agent: HiveAgent
+    @ObservedObject var viewModel: AppViewModel
+
+    enum Source: String, CaseIterable {
+        case visible, recent = "recent-unwrapped", history
+
+        var title: String {
+            switch self {
+            case .visible: "Screen"
+            case .recent: "Recent"
+            case .history: "History"
+            }
+        }
+    }
+
+    @State private var isExpanded = false
+    @State private var source: Source = .recent
+    @State private var lines: [String] = []
+    @State private var isLoading = false
+    @State private var error: String?
+
+    private var text: String { lines.joined(separator: "\n") }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { isExpanded.toggle() }
+            } label: {
+                HStack {
+                    HiveSectionTitle(title: "Transcript", symbol: "text.alignleft")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                HStack(spacing: 6) {
+                    HiveSegmentedPicker(selection: $source, options: Source.allCases, title: \.title)
+                    Spacer(minLength: 0)
+                    if isLoading { ProgressView().controlSize(.small) }
+                    Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
+                        .buttonStyle(HiveIconButtonStyle(size: 22))
+                        .help("Read again")
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
+                    } label: { Image(systemName: "doc.on.doc") }
+                        .buttonStyle(HiveIconButtonStyle(size: 22))
+                        .disabled(lines.isEmpty)
+                        .help("Copy")
+                    Button(action: save) { Image(systemName: "square.and.arrow.down") }
+                        .buttonStyle(HiveIconButtonStyle(size: 22))
+                        .disabled(lines.isEmpty)
+                        .help("Save as a text file")
+                }
+                ScrollView {
+                    Text(lines.isEmpty ? (error ?? "Nothing to show.") : text)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(lines.isEmpty ? .secondary : .primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: 220)
+                .hiveCard(padding: 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .task(id: source) { await load() }
+            }
+        }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            lines = try await viewModel.workspace.readAgent(agent.id, source: source.rawValue, lines: 2000)
+            error = nil
+        } catch {
+            lines = []
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func save() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(agent.name.isEmpty ? agent.kind : agent.name)-transcript.txt"
+        panel.allowedContentTypes = [.plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? text.write(to: url, atomically: true, encoding: .utf8)
     }
 }

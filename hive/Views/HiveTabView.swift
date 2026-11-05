@@ -116,6 +116,7 @@ struct HiveTabView: View {
             if isSplit {
                 PaneTitleStrip(
                     title: paneTitle(id),
+                    reported: viewModel.workspace.metadata(forPane: id),
                     isFocused: focused,
                     showsControls: hoveredPane == id && paneDrag == nil,
                     controls: controls(for: id),
@@ -223,6 +224,12 @@ struct HiveTabView: View {
             ))
         }
         items.append(moveMenu(for: id))
+        let reported = viewModel.workspace.metadata(forPane: id)
+        if reported.title != nil || !reported.tokens.isEmpty {
+            items.append(TerminalMenuItem(title: "Clear Title and Tokens", symbol: "tag.slash") {
+                viewModel.clearMetadata(pane: id)
+            })
+        }
         items.append(TerminalMenuItem(title: "Open Popup Shell", symbol: "macwindow.on.rectangle", key: "p", modifiers: [.command, .option], startsGroup: true) {
             viewModel.openPopup()
         })
@@ -523,6 +530,8 @@ private struct PaneDivider: View {
 /// and its controls while the pointer is over it. Double-click the name to rename the pane.
 private struct PaneTitleStrip: View {
     let title: String
+    /// What the pane's program reported about itself (`hive pane report-metadata`).
+    let reported: (title: String?, tokens: [HiveMetadataEntry.Token])
     let isFocused: Bool
     let showsControls: Bool
     let controls: PaneControls
@@ -539,7 +548,19 @@ private struct PaneTitleStrip: View {
                 .foregroundStyle(isFocused ? Color.primary : Color.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .layoutPriority(1)
+            if let subtitle = reported.title {
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: 8)
+            if !showsControls && !reported.tokens.isEmpty {
+                MetadataTokens(tokens: reported.tokens, limit: 2)
+                    .transition(.opacity)
+            }
             if showsControls {
                 controls
                     .scaleEffect(0.86, anchor: .trailing)

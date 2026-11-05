@@ -7,12 +7,14 @@ enum InspectorPanel: String, Hashable, CaseIterable {
     case files
     case changes
     case agent
+    case processes
 
     var title: String {
         switch self {
         case .files: "Files"
         case .changes: "Changes"
         case .agent: "Agent"
+        case .processes: "Processes"
         }
     }
 
@@ -21,6 +23,7 @@ enum InspectorPanel: String, Hashable, CaseIterable {
         case .files: "doc"
         case .changes: "arrow.triangle.branch"
         case .agent: "sparkles"
+        case .processes: "gearshape.2"
         }
     }
 }
@@ -53,6 +56,19 @@ struct WorkspaceInspectorView: View {
                         "No Agent Here",
                         systemImage: "sparkles",
                         description: Text("Open an agent’s tab, or start one in this environment.")
+                    )
+                }
+            }
+        case .processes:
+            if let environment = viewModel.activeEnvironment {
+                ProcessesInspectorView(environment: environment, viewModel: viewModel)
+                    .id(environment.id)
+            } else {
+                InspectorCard(title: "Processes", symbol: "gearshape.2", detail: "", onReload: {}) {
+                    ContentUnavailableView(
+                        "No Environment Here",
+                        systemImage: "gearshape.2",
+                        description: Text("Open a tab in an environment to run background processes in it.")
                     )
                 }
             }
