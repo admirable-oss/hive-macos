@@ -268,7 +268,22 @@ final class AppViewModel: ObservableObject {
     /// The pane keystrokes go to in the active tab.
     var focusedPaneID: String? {
         guard let tab = activeHiveTab else { return nil }
-        return tab.zoomed ?? tab.focused ?? tab.paneIDs.first
+        let panes = tab.paneIDs
+        // A focus that names a pane already closed falls back to one still on screen.
+        return [tab.zoomed, tab.focused].compactMap { $0 }.first(where: panes.contains) ?? panes.first
+    }
+
+    /// The most panes one tab splits into; past that, terminals get too small to use.
+    static let maxPanesPerTab = 4
+
+    /// Whether the Hive tab holding a pane has room for another split.
+    func canSplit(_ paneID: String) -> Bool {
+        guard let tab = workspace.tabs.first(where: { $0.paneIDs.contains(paneID) }) else { return false }
+        return tab.paneIDs.count < Self.maxPanesPerTab
+    }
+
+    var canSplitFocusedPane: Bool {
+        focusedPaneID.map(canSplit) ?? false
     }
 
     /// The agent the active tab is about: the one in the focused pane, else the tab's first.
@@ -452,6 +467,15 @@ final class AppViewModel: ObservableObject {
     func requestCloseFocusedPane() {
         guard let tab = activeTab else { return }
         guard tab.hiveTabID != nil, let paneID = focusedPaneID else { return removeTab(tab.id) }
+        requestClosePane(paneID)
+    }
+
+    /// Closes a pane, after asking if it runs an agent. A tab's last pane closes the tab.
+    func requestClosePane(_ paneID: String) {
+        if let hiveTab = workspace.tabs.first(where: { $0.paneIDs.contains(paneID) }), hiveTab.paneIDs.count == 1,
+           let tab = tabs.first(where: { $0.hiveTabID == hiveTab.id }) {
+            return requestCloseTab(tab.id)
+        }
         if let agent = workspace.agent(inPane: paneID), agent.state != "exited" {
             pendingClose = .pane(id: paneID, agent: agent)
         } else {
@@ -499,10 +523,12 @@ final class AppViewModel: ObservableObject {
 
     /// Splits a particular pane, as its hover controls do, whether or not it has focus.
     func splitPane(_ paneID: String, direction: String) {
+        guard canSplit(paneID) else { return NSSound.beep() }
         Task { await perform { try await self.workspace.splitPane(paneID, direction: direction) } }
     }
 
     func focusPane(_ id: String) {
+        guard workspace.tabs.first(where: { $0.paneIDs.contains(id) })?.focused != id else { return }
         Task { await perform { try await self.workspace.focusPane(id) } }
     }
 

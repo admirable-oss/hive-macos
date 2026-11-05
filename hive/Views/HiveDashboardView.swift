@@ -42,6 +42,8 @@ struct HiveDashboardView: View {
     @State private var delegationParentID: String?
     @State private var reviewEnvironment: HiveEnvironment?
     @State private var requestedChangePath: String?
+    /// The detail column's width, which the toolbar's actions have to fit beside the tabs.
+    @State private var detailWidth: CGFloat = .infinity
 
     init(hiveURL: URL, sessionName: String = "default") {
         self.hiveURL = hiveURL
@@ -56,6 +58,7 @@ struct HiveDashboardView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         } detail: {
             detail
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
                 .inspector(isPresented: inspectorIsPresented) {
                     inspector
                         .inspectorColumnWidth(min: 260, ideal: 320, max: 480)
@@ -287,53 +290,49 @@ struct HiveDashboardView: View {
         .flatToolbarBackground()
 
         ToolbarItem(placement: .primaryAction) {
+            let density = ToolbarDensity(width: detailWidth)
             HStack(spacing: 8) {
-                // Main View Switcher
-                HStack(spacing: 0) {
-                    modeButton(systemImage: "tray.full", isActive: viewModel.showingInbox, color: .hiveAmber) {
-                        viewModel.showInbox(true); viewModel.showOverview(false)
-                    }
-                    modeButton(systemImage: "terminal", isActive: !viewModel.showingInbox && !viewModel.showingOverview, color: .primary) {
-                        viewModel.showInbox(false); viewModel.showOverview(false)
-                    }
-                    modeButton(systemImage: "rectangle.grid.2x2", isActive: viewModel.showingOverview, color: .hiveAmber) {
-                        viewModel.showOverview(true); viewModel.showInbox(false)
-                    }
+                if density == .minimal {
+                    modeMenu
+                } else {
+                    modeSwitcher
                 }
-                .padding(2)
-                .background(Capsule().fill(Color.primary.opacity(0.06)))
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.04), lineWidth: 0.5))
 
                 Divider()
                     .frame(height: 12)
                     .opacity(0.2)
 
-                // Compact Groups
                 HStack(spacing: 4) {
-                    HStack(spacing: 0) {
-                        inspectorToggle(.files)
-                        inspectorToggle(.changes)
-                        inspectorToggle(.agent)
+                    if density != .minimal {
+                        HStack(spacing: 0) {
+                            ForEach(InspectorPanel.allCases, id: \.self, content: inspectorToggle)
+                        }
                     }
-                    
-                    Divider()
-                        .frame(height: 12)
-                        .opacity(0.2)
-                        .padding(.horizontal, 2)
-                    
-                    HStack(spacing: 0) {
-                        Button { reviewEnvironment = viewModel.activeEnvironment } label: {
-                            Image(systemName: "checkmark.seal")
-                        }
-                        .buttonStyle(ToolbarPillButtonStyle())
-                        .disabled(viewModel.activeEnvironment == nil)
-                        
-                        Button { showingTaskCenter = true } label: {
-                            Image(systemName: "checklist")
-                        }
-                        .buttonStyle(ToolbarPillButtonStyle())
 
-                        commandCenterMenu
+                    if density == .full {
+                        Divider()
+                            .frame(height: 12)
+                            .opacity(0.2)
+                            .padding(.horizontal, 2)
+
+                        HStack(spacing: 0) {
+                            Button { reviewEnvironment = viewModel.activeEnvironment } label: {
+                                Image(systemName: "checkmark.seal")
+                            }
+                            .buttonStyle(ToolbarPillButtonStyle())
+                            .disabled(viewModel.activeEnvironment == nil)
+                            .help("Review changes")
+
+                            Button { showingTaskCenter = true } label: {
+                                Image(systemName: "checklist")
+                            }
+                            .buttonStyle(ToolbarPillButtonStyle())
+                            .help("Tasks")
+
+                            commandCenterMenu
+                        }
+                    } else {
+                        overflowMenu(includesInspector: density == .minimal)
                     }
                 }
 
@@ -347,12 +346,126 @@ struct HiveDashboardView: View {
                         .background(Color.hiveAmber, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .help("New terminal")
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .background(Capsule().fill(.ultraThinMaterial).opacity(0.5))
             .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+            .fixedSize()
+            .animation(.spring(duration: 0.25), value: density)
         }
+    }
+
+    /// How much of the toolbar fits beside the tabs. Narrower windows, or an open inspector,
+    /// fold the less used controls into menus instead of letting them run under the inspector.
+    private enum ToolbarDensity {
+        /// Every control on its own.
+        case full
+        /// Review, tasks and the command center move into one overflow menu.
+        case compact
+        /// The view switcher becomes a menu, and the inspector toggles join the overflow menu.
+        case minimal
+
+        /// Thresholds leave the tab strip about 220pt beside each layout.
+        init(width: CGFloat) {
+            self = width >= 720 ? .full : width >= 590 ? .compact : .minimal
+        }
+    }
+
+    private enum DetailMode: CaseIterable {
+        case inbox, terminal, overview
+
+        var title: String {
+            switch self {
+            case .inbox: "Inbox"
+            case .terminal: "Terminal"
+            case .overview: "Overview"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .inbox: "tray.full"
+            case .terminal: "terminal"
+            case .overview: "rectangle.grid.2x2"
+            }
+        }
+    }
+
+    private var detailMode: DetailMode {
+        viewModel.showingInbox ? .inbox : viewModel.showingOverview ? .overview : .terminal
+    }
+
+    private func show(_ mode: DetailMode) {
+        viewModel.showInbox(mode == .inbox)
+        viewModel.showOverview(mode == .overview)
+    }
+
+    private var modeSwitcher: some View {
+        HStack(spacing: 0) {
+            ForEach(DetailMode.allCases, id: \.self) { mode in
+                modeButton(systemImage: mode.symbol, isActive: detailMode == mode, color: mode == .terminal ? .primary : .hiveAmber) {
+                    show(mode)
+                }
+                .help(mode.title)
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(Color.primary.opacity(0.06)))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.04), lineWidth: 0.5))
+    }
+
+    /// The view switcher folded into one control that shows the current view.
+    private var modeMenu: some View {
+        Menu {
+            Picker("View", selection: Binding(get: { detailMode }, set: show)) {
+                ForEach(DetailMode.allCases, id: \.self) { mode in
+                    Label(mode.title, systemImage: mode.symbol).tag(mode)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Image(systemName: "\(detailMode.symbol).fill")
+                .font(.system(size: 12, weight: .semibold))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .menuIndicator(.hidden)
+        .buttonStyle(ToolbarPillButtonStyle(isActive: true, color: detailMode == .terminal ? .primary : .hiveAmber))
+        .help("\(detailMode.title) · switch view")
+    }
+
+    /// What doesn't fit on a narrow toolbar.
+    private func overflowMenu(includesInspector: Bool) -> some View {
+        Menu {
+            if includesInspector {
+                Section("Inspector") {
+                    ForEach(InspectorPanel.allCases, id: \.self) { panel in
+                        Toggle(isOn: Binding(get: { inspectorPanel == panel }, set: { _ in toggleInspector(panel) })) {
+                            Label(panel.title, systemImage: panel.symbol)
+                        }
+                    }
+                }
+            }
+            Section {
+                Button { reviewEnvironment = viewModel.activeEnvironment } label: { Label("Review Changes…", systemImage: "checkmark.seal") }
+                    .disabled(viewModel.activeEnvironment == nil)
+                Button { showingTaskCenter = true } label: { Label("Tasks…", systemImage: "checklist") }
+            }
+            Menu {
+                commandCenterItems
+            } label: {
+                Label("Command Center", systemImage: "command")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(height: 14)
+        }
+        .menuIndicator(.hidden)
+        .buttonStyle(ToolbarPillButtonStyle(isActive: commandCenter.activeViewID != nil || (includesInspector && inspectorPanel != nil), color: .hiveAmber))
+        .help("More")
     }
 
     private func modeButton(systemImage: String, isActive: Bool, color: Color, action: @escaping () -> Void) -> some View {
@@ -372,12 +485,14 @@ struct HiveDashboardView: View {
         .buttonStyle(.plain)
     }
 
+    private func toggleInspector(_ panel: InspectorPanel) {
+        let isOpening = inspectorPanel != panel
+        if isOpening { lastInspectorPanel = panel }
+        withAnimation(.easeInOut(duration: 0.2)) { inspectorPanel = isOpening ? panel : nil }
+    }
+
     private func inspectorToggle(_ panel: InspectorPanel) -> some View {
-        Button {
-            let isOpening = inspectorPanel != panel
-            if isOpening { lastInspectorPanel = panel }
-            withAnimation(.easeInOut(duration: 0.2)) { inspectorPanel = isOpening ? panel : nil }
-        } label: {
+        Button { toggleInspector(panel) } label: {
             Image(systemName: panel.symbol)
                 .font(.system(size: 12, weight: .medium))
         }
@@ -390,8 +505,11 @@ struct HiveDashboardView: View {
         let hiveTab = viewModel.activeHiveTab
         let isSplit = (hiveTab?.paneIDs.count ?? 0) > 1
         return Menu {
-            Button { viewModel.splitFocusedPane("right") } label: { Label("Split Right   ⌘D", systemImage: "rectangle.split.2x1") }
-            Button { viewModel.splitFocusedPane("down") } label: { Label("Split Down   ⇧⌘D", systemImage: "rectangle.split.1x2") }
+            Group {
+                Button { viewModel.splitFocusedPane("right") } label: { Label("Split Right   ⌘D", systemImage: "rectangle.split.2x1") }
+                Button { viewModel.splitFocusedPane("down") } label: { Label("Split Down   ⇧⌘D", systemImage: "rectangle.split.1x2") }
+            }
+            .disabled(!viewModel.canSplitFocusedPane)
             Divider()
             Button { viewModel.toggleZoom() } label: {
                 Label(hiveTab?.zoomed == nil ? "Zoom Pane   ⇧⌘M" : "Restore Layout   ⇧⌘M", systemImage: "arrow.up.left.and.arrow.down.right")
@@ -413,25 +531,30 @@ struct HiveDashboardView: View {
     /// M7 · The personal command center: saved views, helper delegations, activity and usage.
     private var commandCenterMenu: some View {
         Menu {
-            Button { showingWorkspaceViews = true } label: { Label("Saved views…", systemImage: "rectangle.3.group.bubble.left") }
-            Button { showingDelegation = true } label: { Label("Delegate a helper…", systemImage: "arrow.triangle.branch") }
-            Divider()
-            Button { showingObservers = true } label: { Label("Observers…", systemImage: "eye") }
-            Button { showingLayoutManager = true } label: { Label("Workspace layouts…", systemImage: "rectangle.3.group") }
-            Button { showingActivity = true } label: { Label("Activity & sessions…", systemImage: "clock.arrow.circlepath") }
-            Button { showingUsage = true } label: { Label("Usage & capacity…", systemImage: "gauge.with.dots.needle.33percent") }
-            if let active = commandCenter.activeView {
-                Divider()
-                Button { commandCenter.clearActiveView(); viewModel.showOverview(false) } label: {
-                    Label("Unapply “\(active.name)”", systemImage: "xmark.circle")
-                }
-            }
+            commandCenterItems
         } label: {
             Image(systemName: "command")
                 .font(.system(size: 12, weight: .semibold))
         }
         .buttonStyle(ToolbarPillButtonStyle(isActive: commandCenter.activeViewID != nil, color: .hiveAmber))
         .help("Command center")
+    }
+
+    @ViewBuilder
+    private var commandCenterItems: some View {
+        Button { showingWorkspaceViews = true } label: { Label("Saved views…", systemImage: "rectangle.3.group.bubble.left") }
+        Button { showingDelegation = true } label: { Label("Delegate a helper…", systemImage: "arrow.triangle.branch") }
+        Divider()
+        Button { showingObservers = true } label: { Label("Observers…", systemImage: "eye") }
+        Button { showingLayoutManager = true } label: { Label("Workspace layouts…", systemImage: "rectangle.3.group") }
+        Button { showingActivity = true } label: { Label("Activity & sessions…", systemImage: "clock.arrow.circlepath") }
+        Button { showingUsage = true } label: { Label("Usage & capacity…", systemImage: "gauge.with.dots.needle.33percent") }
+        if let active = commandCenter.activeView {
+            Divider()
+            Button { commandCenter.clearActiveView(); viewModel.showOverview(false) } label: {
+                Label("Unapply “\(active.name)”", systemImage: "xmark.circle")
+            }
+        }
     }
 
     // MARK: - Active view

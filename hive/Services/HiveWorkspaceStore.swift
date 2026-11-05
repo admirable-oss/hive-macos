@@ -197,6 +197,8 @@ final class HiveWorkspaceStore: ObservableObject {
             case "pane.created", "pane.updated", "pane.moved", "pane.focused":
                 let pane = try decode(HivePane.self, from: data)
                 panes[pane.id] = pane
+                // Pane events carry focus on the pane; the tab only learns it on its next update.
+                if pane.focused == true { noteFocus(pane.id, inTab: pane.tabID) }
             case "pane.closed":
                 let id = try decode(HiveIDPayload.self, from: data).id
                 panes[id] = nil
@@ -218,6 +220,11 @@ final class HiveWorkspaceStore: ObservableObject {
         } catch {
             scheduleSnapshot()
         }
+    }
+
+    private func noteFocus(_ paneID: String, inTab tabID: String) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }), tabs[index].focused != paneID else { return }
+        tabs[index].focused = paneID
     }
 
     private func upsert<Item: Identifiable>(_ item: Item, into items: inout [Item]) {
@@ -388,6 +395,9 @@ final class HiveWorkspaceStore: ObservableObject {
 
     /// Focuses a pane, or with a direction its neighbour that way.
     func focusPane(_ id: String, direction: String? = nil) async throws {
+        if direction == nil, let tabID = panes[id]?.tabID ?? tabs.first(where: { $0.paneIDs.contains(id) })?.id {
+            noteFocus(id, inTab: tabID)
+        }
         var params: [String: Any] = ["id": id]
         if let direction { params["direction"] = direction }
         _ = try await call("pane.focus", params)

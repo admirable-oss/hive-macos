@@ -413,11 +413,26 @@ final class TerminalStore: ObservableObject {
     }
 }
 
+/// An entry the host adds to a terminal's right-click menu, between the editing items and Close.
+struct TerminalMenuItem {
+    let title: String
+    var symbol: String?
+    var key = ""
+    var modifiers: NSEvent.ModifierFlags = .command
+    var isEnabled = true
+    /// Draws a separator above this item.
+    var startsGroup = false
+    let action: () -> Void
+}
+
 /// One terminal with its end-of-session banner. Reports clicks so Hive can move its focus.
 struct TerminalSurface: View {
     @ObservedObject var session: TerminalSession
     var isFocused = true
     var showsFocusRing = false
+    /// False while another pane covers this one, so clicks through it don't steal focus.
+    var acceptsClicks = true
+    var menuItems: [TerminalMenuItem] = []
     var onFocus: () -> Void = {}
     let onClose: () -> Void
 
@@ -434,8 +449,11 @@ struct TerminalSurface: View {
             session: session,
             colorScheme: colorScheme,
             autoFocusTerminal: isFocused && !showingFind,
+            acceptsClicks: acceptsClicks,
+            menuItems: menuItems,
             onFocus: onFocus,
-            onFind: openFind
+            onFind: openFind,
+            onClose: onClose
         )
             .padding(.leading, 10)
             .padding(.top, 6)
@@ -565,15 +583,53 @@ private struct TerminalHostView: NSViewRepresentable {
     let colorScheme: ColorScheme
     /// False while the find bar owns the keyboard, so focus isn't pulled back to the shell.
     let autoFocusTerminal: Bool
+    let acceptsClicks: Bool
+    let menuItems: [TerminalMenuItem]
     let onFocus: () -> Void
     let onFind: () -> Void
+    let onClose: () -> Void
 
-    final class Coordinator {
+    final class Coordinator: NSObject, NSMenuDelegate {
         var appliedScheme: ColorScheme?
         var clickMonitor: Any?
         var keyMonitor: Any?
+        var acceptsClicks = true
+        var menuItems: [TerminalMenuItem] = []
         var onFocus: () -> Void = {}
         var onFind: () -> Void = {}
+        var onClose: () -> Void = {}
+        weak var session: TerminalSession?
+        let menu = NSMenu()
+
+        override init() {
+            super.init()
+            menu.delegate = self
+        }
+
+        /// Built as it opens, so titles and enabled states match the pane right now.
+        func menuNeedsUpdate(_ menu: NSMenu) {
+            menu.removeAllItems()
+            guard let session else { return }
+            let terminal = session.terminalView
+            // SwiftTerm validates its own editing actions, so Copy is only live with a selection.
+            menu.addItem(Self.item("Copy", symbol: "doc.on.doc", key: "c", target: terminal, action: #selector(TerminalView.copy(_:))))
+            menu.addItem(Self.item("Paste", symbol: "doc.on.clipboard", key: "v", target: terminal, action: #selector(TerminalView.paste(_:))))
+            menu.addItem(Self.item("Select All", symbol: "selection.pin.in.out", key: "a", target: terminal, action: #selector(NSResponder.selectAll(_:))))
+            menu.addItem(ClosureMenuItem(TerminalMenuItem(title: "Find…", symbol: "magnifyingglass", key: "f", action: onFind)))
+            for (index, entry) in menuItems.enumerated() {
+                if index == 0 || entry.startsGroup { menu.addItem(.separator()) }
+                menu.addItem(ClosureMenuItem(entry))
+            }
+            menu.addItem(.separator())
+            menu.addItem(ClosureMenuItem(TerminalMenuItem(title: session.closeTitle, symbol: "xmark", key: "w", action: onClose)))
+        }
+
+        private static func item(_ title: String, symbol: String, key: String, target: AnyObject, action: Selector) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            item.target = target
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            return item
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -582,8 +638,9 @@ private struct TerminalHostView: NSViewRepresentable {
         let container = NSView()
         let coordinator = context.coordinator
         // SwiftTerm keeps clicks to itself; watch for ones that land in this terminal.
-        coordinator.clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak container] event in
-            if let container, event.window === container.window,
+        // A right-click focuses too, so its menu acts on the pane under the pointer.
+        coordinator.clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak container, weak coordinator] event in
+            if let container, let coordinator, coordinator.acceptsClicks, event.window === container.window,
                container.bounds.contains(container.convert(event.locationInWindow, from: nil)) {
                 coordinator.onFocus()
             }
@@ -604,8 +661,13 @@ private struct TerminalHostView: NSViewRepresentable {
     }
 
     func updateNSView(_ container: NSView, context: Context) {
-        context.coordinator.onFocus = onFocus
-        context.coordinator.onFind = onFind
+        let coordinator = context.coordinator
+        coordinator.acceptsClicks = acceptsClicks
+        coordinator.menuItems = menuItems
+        coordinator.onFocus = onFocus
+        coordinator.onFind = onFind
+        coordinator.onClose = onClose
+        coordinator.session = session
         let terminal = session.terminalView
         if terminal.superview !== container {
             terminal.removeFromSuperview()
@@ -613,11 +675,13 @@ private struct TerminalHostView: NSViewRepresentable {
             terminal.autoresizingMask = [.width, .height]
             container.addSubview(terminal)
         }
+        // A terminal shown in two places (tab and inspector) takes the menu of where it is now.
+        if terminal.menu !== coordinator.menu { terminal.menu = coordinator.menu }
         if autoFocusTerminal, container.window?.firstResponder !== terminal {
             DispatchQueue.main.async { terminal.window?.makeFirstResponder(terminal) }
         }
-        if context.coordinator.appliedScheme != colorScheme {
-            context.coordinator.appliedScheme = colorScheme
+        if coordinator.appliedScheme != colorScheme {
+            coordinator.appliedScheme = colorScheme
             TerminalPalette(colorScheme).apply(to: terminal)
         }
     }
@@ -626,6 +690,27 @@ private struct TerminalHostView: NSViewRepresentable {
         if let monitor = coordinator.clickMonitor { NSEvent.removeMonitor(monitor) }
         if let monitor = coordinator.keyMonitor { NSEvent.removeMonitor(monitor) }
     }
+}
+
+/// A context-menu item that runs a closure, and is enabled or not as its entry says.
+private final class ClosureMenuItem: NSMenuItem, NSMenuItemValidation {
+    private let handler: () -> Void
+    private let allowed: Bool
+
+    init(_ entry: TerminalMenuItem) {
+        handler = entry.action
+        allowed = entry.isEnabled
+        super.init(title: entry.title, action: #selector(fire), keyEquivalent: entry.key)
+        target = self
+        keyEquivalentModifierMask = entry.modifiers
+        image = entry.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func fire() { handler() }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { allowed }
 }
 
 private struct TerminalPalette {

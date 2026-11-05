@@ -9,8 +9,8 @@ struct HiveTab: Decodable, Identifiable, Hashable {
     let environmentID: String
     let name: String
     let active: Bool?
-    /// The focused pane's ID.
-    let focused: String?
+    /// The focused pane's ID. The desktop moves it ahead of Hive's answer so a click lands at once.
+    var focused: String?
     /// The zoomed pane's ID, when one fills the tab.
     let zoomed: String?
     let layout: HiveLayoutNode?

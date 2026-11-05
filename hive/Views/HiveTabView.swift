@@ -38,7 +38,7 @@ struct HiveTabView: View {
                         let isZoomed = zoomed == id
                         let isHidden = zoomed != nil && !isZoomed
                         let rect = isZoomed ? bounds : arrangement.panes[id] ?? bounds
-                        paneCard(id)
+                        paneCard(id, isHidden: isHidden)
                             .frame(width: max(rect.width, 1), height: max(rect.height, 1))
                             .position(x: rect.midX, y: rect.midY)
                             .opacity(isHidden ? 0 : 1)
@@ -88,10 +88,10 @@ struct HiveTabView: View {
 
     // MARK: Panes
 
-    private func paneCard(_ id: String) -> some View {
+    private func paneCard(_ id: String, isHidden: Bool) -> some View {
         let focused = viewModel.focusedPaneID == id
         let shape = RoundedRectangle(cornerRadius: isSplit ? 10 : 0, style: .continuous)
-        return pane(id, focused: focused)
+        return pane(id, focused: focused, acceptsClicks: !isHidden)
             .clipShape(shape)
             .overlay {
                 if isSplit {
@@ -110,13 +110,14 @@ struct HiveTabView: View {
             .overlay(alignment: .topTrailing) {
                 if hoveredPane == id {
                     PaneControls(
+                        canSplit: canSplit,
                         canZoom: isSplit,
                         isZoomed: zoomed == id,
                         canClose: isSplit,
                         onSplitRight: { viewModel.splitPane(id, direction: "right") },
                         onSplitDown: { viewModel.splitPane(id, direction: "down") },
                         onZoom: { viewModel.toggleZoom(id) },
-                        onClose: { Task { await viewModel.closePane(id) } }
+                        onClose: { viewModel.requestClosePane(id) }
                     )
                     .padding(8)
                     .transition(.scale(scale: 0.85, anchor: .topTrailing).combined(with: .opacity))
@@ -130,15 +131,41 @@ struct HiveTabView: View {
             .animation(.easeOut(duration: 0.18), value: focused)
     }
 
-    private func pane(_ id: String, focused: Bool) -> some View {
+    private func pane(_ id: String, focused: Bool, acceptsClicks: Bool) -> some View {
         let session = terminals.paneSession(id, viewModel: viewModel)
         return TerminalSurface(
             session: session,
             isFocused: focused,
             showsFocusRing: false,
+            acceptsClicks: acceptsClicks,
+            menuItems: menuItems(for: id),
             onFocus: { if !focused { viewModel.focusPane(id) } },
-            onClose: { Task { await viewModel.closePane(id) } }
+            onClose: { viewModel.requestClosePane(id) }
         )
+    }
+
+    private var canSplit: Bool { paneIDs.count < AppViewModel.maxPanesPerTab }
+
+    /// The pane half of a terminal's right-click menu; Close comes after it.
+    private func menuItems(for id: String) -> [TerminalMenuItem] {
+        let splitHelp = canSplit ? "" : " (\(AppViewModel.maxPanesPerTab) panes max)"
+        var items = [
+            TerminalMenuItem(title: "Split Right" + splitHelp, symbol: "rectangle.split.2x1", key: "d", isEnabled: canSplit) {
+                viewModel.splitPane(id, direction: "right")
+            },
+            TerminalMenuItem(title: "Split Down" + splitHelp, symbol: "rectangle.split.1x2", key: "d", modifiers: [.command, .shift], isEnabled: canSplit) {
+                viewModel.splitPane(id, direction: "down")
+            },
+        ]
+        if isSplit {
+            let isZoomed = zoomed == id
+            items.append(TerminalMenuItem(
+                title: isZoomed ? "Restore Layout" : "Zoom Pane",
+                symbol: isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                key: "m", modifiers: [.command, .shift]
+            ) { viewModel.toggleZoom(id) })
+        }
+        return items
     }
 
     // MARK: Dividers
@@ -279,6 +306,7 @@ private struct PaneDivider: View {
 
 /// The glass pill on a hovered pane: split it either way, zoom it, or close it.
 private struct PaneControls: View {
+    let canSplit: Bool
     let canZoom: Bool
     let isZoomed: Bool
     let canClose: Bool
@@ -289,8 +317,11 @@ private struct PaneControls: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            control("rectangle.split.2x1", help: "Split right  ⌘D", action: onSplitRight)
-            control("rectangle.split.1x2", help: "Split down  ⇧⌘D", action: onSplitDown)
+            Group {
+                control("rectangle.split.2x1", help: canSplit ? "Split right  ⌘D" : Self.fullHelp, action: onSplitRight)
+                control("rectangle.split.1x2", help: canSplit ? "Split down  ⇧⌘D" : Self.fullHelp, action: onSplitDown)
+            }
+            .disabled(!canSplit)
             if canZoom {
                 control(isZoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                         help: isZoomed ? "Restore layout  ⇧⌘M" : "Zoom pane  ⇧⌘M",
@@ -306,6 +337,8 @@ private struct PaneControls: View {
         .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
     }
+
+    private static let fullHelp = "A tab holds up to \(AppViewModel.maxPanesPerTab) panes"
 
     private func control(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -325,12 +358,15 @@ private struct PaneControlButtonStyle: ButtonStyle {
         let configuration: ButtonStyleConfiguration
         @State private var isHovering = false
 
+        @Environment(\.isEnabled) private var isEnabled
+
         var body: some View {
             configuration.label
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(isHovering ? Color.primary : Color.secondary)
+                .opacity(isEnabled ? 1 : 0.35)
                 .frame(width: 24, height: 22)
-                .background(Capsule().fill(Color.primary.opacity(isHovering ? 0.1 : 0)))
+                .background(Capsule().fill(Color.primary.opacity(isHovering && isEnabled ? 0.1 : 0)))
                 .scaleEffect(configuration.isPressed ? 0.88 : 1)
                 .contentShape(Capsule())
                 .onHover { isHovering = $0 }
