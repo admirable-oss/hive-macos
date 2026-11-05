@@ -20,7 +20,6 @@ struct WorkspaceViewsView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             HStack(spacing: 0) {
                 viewList.frame(width: 232)
                 Divider()
@@ -34,24 +33,23 @@ struct WorkspaceViewsView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "rectangle.3.group.bubble.left")
-                .foregroundStyle(Color.hiveAmber)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Workspace views").font(.title3.weight(.semibold))
-                Text("Save how the workspace looks, then switch between views.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
+        HiveSheetHeader(
+            symbol: "rectangle.3.group.bubble.left",
+            title: "Workspace views",
+            subtitle: "Save how the workspace looks, then switch between views.",
+            onClose: { dismiss() }
+        ) {
             if let statusMessage {
-                Text(statusMessage).font(.caption).foregroundStyle(.secondary)
+                HiveChip(text: statusMessage, tint: .hiveAmber, symbol: "checkmark")
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
+                    .id(statusMessage)
             }
-            Button { duplicateCurrent() } label: { Label("New View", systemImage: "plus") }
             Button { showingRecipes = true } label: { Label("Recipes…", systemImage: "shippingbox") }
-            Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                .buttonStyle(.hive)
+            Button { duplicateCurrent() } label: { Label("New View", systemImage: "plus") }
+                .buttonStyle(.hivePrimary)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: statusMessage)
     }
 
     private var viewList: some View {
@@ -70,6 +68,8 @@ struct WorkspaceViewsView: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(Color.primary.opacity(0.02))
         .onChange(of: selectedID) { _, id in
             select(commandCenter.views.first { $0.id == id })
         }
@@ -78,10 +78,11 @@ struct WorkspaceViewsView: View {
     private func row(_ view: WorkspaceView) -> some View {
         HStack(spacing: 7) {
             Image(systemName: view.settings.kind.symbol)
-                .font(.system(size: 11))
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(Color.hiveAmber)
-                .frame(width: 14)
-            Text(view.name).lineLimit(1)
+                .frame(width: 20, height: 20)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.hiveAmber.opacity(0.13)))
+            Text(view.name).font(.system(size: 12.5)).lineLimit(1)
             Spacer(minLength: 2)
             if commandCenter.activeViewID == view.id {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(Color.hiveAmber)
@@ -103,44 +104,52 @@ struct WorkspaceViewsView: View {
     private func editorForm(_ view: Binding<WorkspaceView>) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Name").font(.subheadline.weight(.semibold))
+                VStack(alignment: .leading, spacing: 8) {
+                    HiveSectionTitle(title: "Name", symbol: "textformat")
                     TextField("View name", text: view.name)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.hive)
                         .disabled(view.wrappedValue.builtIn)
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Opens onto").font(.subheadline.weight(.semibold))
-                    Picker("Opens onto", selection: view.settings.kind) {
-                        ForEach(WorkspaceViewKind.allCases, id: \.self) { kind in
-                            Label(kind.title, systemImage: kind.symbol).tag(kind)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                VStack(alignment: .leading, spacing: 8) {
+                    HiveSectionTitle(title: "Opens onto", symbol: "rectangle.portrait.on.rectangle.portrait")
+                    HiveSegmentedPicker(
+                        selection: view.settings.kind,
+                        options: WorkspaceViewKind.allCases,
+                        title: { $0.title },
+                        symbol: { $0.symbol }
+                    )
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Sidebar").font(.subheadline.weight(.semibold))
-                    Toggle("Environments", isOn: view.settings.showsEnvironments)
-                    Toggle("Agents", isOn: view.settings.showsAgents)
-                    Toggle("Machines", isOn: view.settings.showsMachines)
-                    Toggle("Group worktrees under their repository", isOn: view.settings.groupsWorktrees)
+                    HiveSectionTitle(title: "Sidebar", symbol: "sidebar.left")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Environments", isOn: view.settings.showsEnvironments)
+                        Toggle("Agents", isOn: view.settings.showsAgents)
+                        Toggle("Machines", isOn: view.settings.showsMachines)
+                        Toggle("Group worktrees under their repository", isOn: view.settings.groupsWorktrees)
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .font(.system(size: 12.5))
+                    .hiveCard(padding: 12)
                 }
 
-                HStack(alignment: .top, spacing: 28) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Density").font(.subheadline.weight(.semibold))
-                        Picker("Density", selection: view.settings.density) {
-                            ForEach(WorkspaceDensity.allCases, id: \.self) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HiveSectionTitle(title: "Density", symbol: "line.3.horizontal")
+                        HiveSegmentedPicker(
+                            selection: view.settings.density,
+                            options: WorkspaceDensity.allCases,
+                            title: { $0.title }
+                        )
                     }
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Inspector").font(.subheadline.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 8) {
+                        HiveSectionTitle(title: "Inspector", symbol: "sidebar.right")
                         Toggle("Show inspector by default", isOn: view.settings.showsInspector)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .font(.system(size: 12.5))
                         Picker("Panel", selection: inspectorBinding(view)) {
                             Text("None").tag("")
                             ForEach(InspectorPanel.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
@@ -150,24 +159,27 @@ struct WorkspaceViewsView: View {
                     }
                 }
 
-                Divider()
+                Divider().opacity(0.5)
 
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     Button {
                         commandCenter.save(view.wrappedValue)
                         commandCenter.apply(commandCenter.views.first { $0.id == view.wrappedValue.id } ?? view.wrappedValue)
                         statusMessage = "Applied “\(view.wrappedValue.name)”."
                     } label: { Label("Apply", systemImage: "checkmark.circle") }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.hivePrimary)
 
                     Button("Save") {
                         commandCenter.save(view.wrappedValue)
                         statusMessage = "Saved."
                     }
+                    .buttonStyle(.hive)
 
                     Button("Revert") { select(commandCenter.views.first { $0.id == view.wrappedValue.id }) }
+                        .buttonStyle(.hive)
 
                     Button { showingAgentEditor = true } label: { Label("Edit with agent…", systemImage: "wand.and.stars") }
+                        .buttonStyle(.hive)
 
                     Spacer()
 
@@ -177,17 +189,21 @@ struct WorkspaceViewsView: View {
                             select(commandCenter.views.first { $0.id == view.wrappedValue.id })
                             statusMessage = "Restored built-in defaults."
                         }
+                        .buttonStyle(.hive)
                     } else {
                         Button("Delete", role: .destructive) {
                             commandCenter.delete(view.wrappedValue.id)
                             select(commandCenter.views.first { !$0.builtIn } ?? commandCenter.views.first)
                             statusMessage = "Deleted."
                         }
+                        .buttonStyle(.hive)
                     }
                 }
 
-                Text("A view is plain configuration: which sections show, how they group, row density and the inspector default. It never runs a script.")
-                    .font(.caption).foregroundStyle(.secondary)
+                HiveNotice(
+                    text: "A view is plain configuration: which sections show, how they group, row density and the inspector default. It never runs a script.",
+                    kind: .info
+                )
             }
             .padding(20)
         }
@@ -271,16 +287,19 @@ struct ViewEditAgentSheet: View {
     private var runningAgents: [HiveAgent] { viewModel.agents.filter { $0.state != "exited" } }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+        HiveSheetHeader(
+            symbol: "wand.and.stars",
+            title: "Adjust “\(base.name)”",
+            subtitle: "Describe the change, or edit the declarative configuration directly. The result is previewed before it is applied."
+        )
         VStack(alignment: .leading, spacing: 14) {
-            Text("Adjust “\(base.name)”").font(.title3.weight(.semibold))
-            Text("Describe the change, or edit the declarative configuration directly. The result is previewed before it is applied.")
-                .font(.callout).foregroundStyle(.secondary)
-
-            Picker("Mode", selection: $mode) {
-                ForEach(Mode.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            HiveSegmentedPicker(
+                selection: $mode.animation(.spring(response: 0.3, dampingFraction: 0.85)),
+                options: Mode.allCases,
+                title: { $0.title },
+                symbol: { $0 == .agent ? "sparkles" : "curlybraces" }
+            )
 
             if mode == .agent {
                 HStack {
@@ -294,42 +313,51 @@ struct ViewEditAgentSheet: View {
                     Spacer()
                 }
                 TextField("e.g. “Compact rows, hide machines, open the Changes inspector”", text: $instruction)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.hive)
                 Button { Task { await askAgent() } } label: {
                     Label("Ask agent", systemImage: "paperplane")
                 }
+                .buttonStyle(.hivePrimaryCompact)
                 .disabled(selectedAgentID.isEmpty || instruction.trimmingCharacters(in: .whitespaces).isEmpty || isWorking)
                 if runningAgents.isEmpty {
-                    Text("No running agents. Start one, or edit the configuration by hand.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    HiveNotice(text: "No running agents. Start one, or edit the configuration by hand.", kind: .info)
                 }
             } else {
-                Text("Configuration").font(.subheadline.weight(.semibold))
+                HiveSectionTitle(title: "Configuration", symbol: "curlybraces")
                 TextEditor(text: $manualJSON)
                     .font(.system(size: 11, design: .monospaced))
+                    .scrollContentBackground(.hidden)
                     .frame(minHeight: 150)
-                    .padding(6)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.045)))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5))
                 Button { parseManual() } label: { Label("Preview configuration", systemImage: "eye") }
+                    .buttonStyle(.hiveCompact)
             }
 
             if isWorking { ProgressView().controlSize(.small) }
 
             if let proposed {
-                Divider()
-                Text("Preview").font(.subheadline.weight(.semibold))
+                HiveSectionTitle(title: "Preview", symbol: "eye")
                 previewTable(proposed)
+                    .hiveCard(padding: 12, tint: .hiveAmber)
+                    .transition(.scale(scale: 0.97).combined(with: .opacity))
             }
 
             if let status {
-                Text(status).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                HiveNotice(text: status, kind: .info)
             }
 
             Spacer(minLength: 0)
+        }
+        .padding(20)
+        .animation(.spring(response: 0.32, dampingFraction: 0.85), value: proposed)
+        .animation(.spring(response: 0.32, dampingFraction: 0.85), value: status)
 
-            HStack {
+            HStack(spacing: 8) {
                 if proposed != nil {
                     Button("Undo preview") { proposed = nil; status = nil }
+                        .buttonStyle(.hive)
                 }
                 Button("Restore defaults") {
                     if let original = CommandCenterStore.builtInViews.first(where: { $0.id == base.id })?.settings {
@@ -340,19 +368,25 @@ struct ViewEditAgentSheet: View {
                         status = "Previewing the default configuration."
                     }
                 }
+                .buttonStyle(.hive)
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Apply") {
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.hive)
+                    .keyboardShortcut(.cancelAction)
+                Button {
                     if let proposed { onApply(proposed) }
                     dismiss()
-                }
-                .buttonStyle(.borderedProminent)
+                } label: { Label("Apply", systemImage: "checkmark") }
+                .buttonStyle(.hivePrimary)
                 .disabled(proposed == nil)
                 .keyboardShortcut(.defaultAction)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(Color.primary.opacity(0.025))
+            .overlay(alignment: .top) { Divider().opacity(0.5) }
         }
-        .padding(22)
-        .frame(width: 640, height: 560)
+        .frame(width: 640, height: 600)
         .onAppear {
             manualJSON = Self.encode(base.settings)
             selectedAgentID = runningAgents.first?.id ?? ""
@@ -373,9 +407,6 @@ struct ViewEditAgentSheet: View {
                 Text("No changes from the current settings.").font(.caption).foregroundStyle(.secondary)
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func askAgent() async {
@@ -465,61 +496,65 @@ struct RecipesSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Workspace recipes").font(.title3.weight(.semibold))
-                    Text("Versioned sets of saved views you can preview, export and import.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Import…") { showingImporter = true }
+            HiveSheetHeader(
+                symbol: "shippingbox",
+                title: "Workspace recipes",
+                subtitle: "Versioned sets of saved views you can preview, export and import.",
+                onClose: { dismiss() }
+            ) {
                 Button("Export My Views…") { exportCurrentViews() }
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(.hive)
+                Button { showingImporter = true } label: { Label("Import…", systemImage: "square.and.arrow.down") }
+                    .buttonStyle(.hivePrimary)
             }
-            .padding(16)
-            Divider()
 
             if commandCenter.recipes.isEmpty {
                 ContentUnavailableView("No recipes", systemImage: "shippingbox", description: Text("Import a recipe file to add its views."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List {
+                ScrollView {
+                  VStack(spacing: 8) {
                     ForEach(commandCenter.recipes) { recipe in
                         HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "shippingbox.fill").foregroundStyle(Color.hiveAmber)
+                            Image(systemName: "shippingbox.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.hiveAmber)
+                                .frame(width: 28, height: 28)
+                                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.hiveAmber.opacity(0.13)))
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack(spacing: 6) {
-                                    Text(recipe.name).font(.callout.weight(.medium))
+                                    Text(recipe.name).font(.system(size: 12.5, weight: .semibold))
                                     if recipe.builtIn {
-                                        Text("First-party").font(.system(size: 9, weight: .semibold))
-                                            .padding(.horizontal, 5).padding(.vertical, 1)
-                                            .background(Color.hiveAmber.opacity(0.18), in: Capsule())
+                                        HiveChip(text: "First-party", tint: .hiveAmber)
                                     }
                                     if !recipe.compatible {
-                                        Text("Needs newer app").font(.system(size: 9, weight: .semibold)).foregroundStyle(.red)
+                                        HiveChip(text: "Needs newer app", tint: .red)
                                     }
                                 }
                                 Text("\(recipe.views.count) view\(recipe.views.count == 1 ? "" : "s") · format v\(recipe.formatVersion)")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.system(size: 11)).foregroundStyle(.secondary)
                                 Text(recipe.views.map(\.name).joined(separator: ", "))
                                     .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(2)
                             }
                             Spacer(minLength: 8)
                             Button("Export…") { export(recipe) }
-                                .controlSize(.small)
+                                .buttonStyle(.hiveCompact)
                             if !recipe.builtIn {
                                 Button("Delete", role: .destructive) { commandCenter.deleteRecipe(recipe.id) }
-                                    .controlSize(.small)
+                                    .buttonStyle(.hiveCompact)
                             }
                         }
-                        .padding(.vertical, 3)
+                        .hiveCard(padding: 12, interactive: true)
+                        .transition(.scale(scale: 0.97).combined(with: .opacity))
                     }
+                  }
+                  .padding(16)
+                  .animation(.spring(response: 0.32, dampingFraction: 0.85), value: commandCenter.recipes.map(\.id))
                 }
-                .listStyle(.inset)
             }
 
             if let message {
-                Text(message).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.bottom, 10)
+                HiveNotice(text: message, kind: .info).padding(.horizontal, 16).padding(.bottom, 12)
             }
         }
         .frame(width: 620, height: 460)
@@ -532,49 +567,50 @@ struct RecipesSheet: View {
     }
 
     private func importPreview(_ recipe: WorkspaceRecipe) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+        HiveSheetHeader(symbol: "shippingbox", title: "Preview “\(recipe.name)”", subtitle: recipe.author.map { "by \($0)" })
         VStack(alignment: .leading, spacing: 12) {
-            Text("Preview “\(recipe.name)”").font(.title3.weight(.semibold))
-            HStack(spacing: 8) {
-                Label("Format v\(recipe.formatVersion)", systemImage: "doc.badge.gearshape")
+            HStack(spacing: 6) {
+                HiveChip(text: "Format v\(recipe.formatVersion)", symbol: "doc.badge.gearshape")
                 if recipe.compatible {
-                    Label("Compatible", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                    HiveChip(text: "Compatible", tint: .green, symbol: "checkmark.seal.fill")
                 } else {
-                    Label("Needs a newer version of Hive Desktop", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                    HiveChip(text: "Needs a newer version of Hive Desktop", tint: .red, symbol: "exclamationmark.triangle.fill")
                 }
-                if let author = recipe.author { Text("by \(author)").foregroundStyle(.secondary) }
             }
-            .font(.caption)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(recipe.views) { view in
                         VStack(alignment: .leading, spacing: 3) {
-                            Label(view.name, systemImage: view.settings.kind.symbol).font(.callout.weight(.medium))
-                            Text(summary(view.settings)).font(.caption).foregroundStyle(.secondary)
+                            Label(view.name, systemImage: view.settings.kind.symbol).font(.system(size: 12.5, weight: .semibold))
+                            Text(summary(view.settings)).font(.system(size: 11)).foregroundStyle(.secondary)
                         }
-                        .padding(9)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                        .hiveCard(padding: 10)
                     }
                 }
             }
             .frame(minHeight: 220)
 
             HStack {
-                Text("Importing adds these views to “My views”.").font(.caption).foregroundStyle(.secondary)
+                Text("Importing adds these views to “My views”.").font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
-                Button("Cancel") { pendingImport = nil }.keyboardShortcut(.cancelAction)
-                Button("Add Views") {
+                Button("Cancel") { pendingImport = nil }
+                    .buttonStyle(.hive)
+                    .keyboardShortcut(.cancelAction)
+                Button {
                     let result = commandCenter.importRecipe(recipe)
                     message = result.message
                     pendingImport = nil
-                }
-                .buttonStyle(.borderedProminent)
+                } label: { Label("Add Views", systemImage: "plus") }
+                .buttonStyle(.hivePrimary)
                 .disabled(!recipe.compatible)
+                .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(22)
-        .frame(width: 560, height: 440)
+        .padding(20)
+        }
+        .frame(width: 560, height: 480)
     }
 
     private func summary(_ settings: WorkspaceViewSettings) -> String {

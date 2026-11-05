@@ -45,23 +45,38 @@ struct ChangeRow: View {
     let change: GitChange
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
+            ChangeStatusBadge(change: change)
             Text(change.fileName)
+                .font(.system(size: 12.5))
+                .strikethrough(change.code == "D", color: .secondary)
                 .lineLimit(1)
             if !change.directory.isEmpty {
                 Text(change.directory)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.head)
             }
             Spacer(minLength: 4)
-            Text(change.label)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(change.color)
         }
+        .padding(.vertical, 2)
         .tag(change.id)
         .help(change.path)
+    }
+}
+
+/// A change's status letter in a tinted tile: M, A, D, U and so on.
+struct ChangeStatusBadge: View {
+    let change: GitChange
+
+    var body: some View {
+        Text(change.label)
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .foregroundStyle(change.color)
+            .frame(width: 18, height: 18)
+            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(change.color.opacity(0.15)))
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(change.color.opacity(0.2), lineWidth: 0.5))
     }
 }
 
@@ -83,17 +98,22 @@ struct ChangeListView: View {
     var body: some View {
         List(selection: $selection) {
             if !staged.isEmpty {
-                Section("Staged") {
+                Section {
                     ForEach(staged) { ChangeRow(change: $0) }
+                } header: {
+                    HiveSectionTitle(title: "Staged", count: staged.count)
                 }
             }
             if !unstaged.isEmpty {
-                Section("Changes") {
+                Section {
                     ForEach(unstaged) { ChangeRow(change: $0) }
+                } header: {
+                    HiveSectionTitle(title: "Changes", count: unstaged.count)
                 }
             }
         }
         .listStyle(.sidebar)
+        .animation(.spring(response: 0.32, dampingFraction: 0.85), value: changes.map(\.id))
         .scrollContentBackground(.hidden)
         .contextMenu(forSelectionType: GitChange.ID.self) { ids in
             let stageable = unstaged.filter { ids.contains($0.id) }
@@ -168,12 +188,18 @@ struct DiffPaneView: View {
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 if let area, !isBusy {
-                    Button(area == .unstaged ? "Stage Hunk" : "Unstage Hunk") {
+                    Button {
                         onApplyHunks(file, hunk)
+                    } label: {
+                        Label(area == .unstaged ? "Stage Hunk" : "Unstage Hunk", systemImage: area == .unstaged ? "plus" : "minus")
+                            .font(.system(size: 10, weight: .semibold))
+                            .labelStyle(.titleAndIcon)
+                            .foregroundStyle(Color.hiveAmber)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.hiveAmber.opacity(0.14)))
                     }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.hiveAmber)
+                    .buttonStyle(.plain)
                     .help(area == .unstaged
                           ? "Stage this hunk only"
                           : "Move this hunk back out of the index")
@@ -230,12 +256,18 @@ struct CommitSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ReviewContextHeader(environment: environmentName, path: path, branch: branch) { EmptyView() }
-            Divider()
+            ReviewContextHeader(environment: environmentName, path: path, branch: branch, symbol: "checkmark.circle") { EmptyView() }
 
             VSplitView {
-                List(staged) { ChangeRow(change: $0) }
-                    .listStyle(.inset)
+                List {
+                    Section {
+                        ForEach(staged) { ChangeRow(change: $0) }
+                    } header: {
+                        HiveSectionTitle(title: "Staged", symbol: "tray.full", count: staged.count)
+                    }
+                }
+                    .listStyle(.sidebar)
+                    .scrollContentBackground(.hidden)
                     .frame(minHeight: 80, idealHeight: 130)
 
                 DiffPaneView(
@@ -248,34 +280,34 @@ struct CommitSheet: View {
                 .frame(minHeight: 220)
             }
 
-            Divider()
-
             VStack(alignment: .leading, spacing: 10) {
                 TextField("Commit message", text: $message, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.hive)
                     .lineLimit(2...5)
                 if let commitError {
-                    Label(commitError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .foregroundStyle(.red)
-                        .lineLimit(3)
+                    HiveNotice(text: commitError)
                 }
-                HStack {
+                HStack(spacing: 8) {
                     Text(staged.isEmpty
                          ? "Nothing staged"
                          : "\(staged.count) file\(staged.count == 1 ? "" : "s") staged")
-                        .font(.callout)
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(.secondary)
                     Spacer()
+                    if isCommitting { ProgressView().controlSize(.small) }
                     Button("Cancel") { dismiss() }
+                        .buttonStyle(.hive)
                         .keyboardShortcut(.cancelAction)
-                    Button("Commit") { Task { await commit() } }
-                        .buttonStyle(.borderedProminent)
+                    Button { Task { await commit() } } label: { Label("Commit", systemImage: "checkmark") }
+                        .buttonStyle(.hivePrimary)
                         .disabled(!canCommit)
                         .keyboardShortcut(.defaultAction)
                 }
             }
-            .padding(14)
+            .padding(16)
+            .background(Color.primary.opacity(0.025))
+            .overlay(alignment: .top) { Divider().opacity(0.5) }
+            .animation(.spring(response: 0.3, dampingFraction: 0.85), value: commitError)
         }
         .frame(minWidth: 620, minHeight: 580)
         .task { await load() }
@@ -315,15 +347,15 @@ struct ReviewContextHeader<Trailing: View>: View {
     let path: String
     let branch: String?
     var detail: String?
+    var symbol = "arrow.triangle.branch"
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.triangle.branch")
-                .foregroundStyle(Color.hiveAmber)
+        HStack(spacing: 12) {
+            HiveBadgeIcon(symbol: symbol, size: 30)
             VStack(alignment: .leading, spacing: 1) {
                 Text(environment)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .lineLimit(1)
                 Text(path)
                     .font(.system(size: 11))
@@ -332,24 +364,19 @@ struct ReviewContextHeader<Trailing: View>: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 1) {
-                Label(branch ?? "Detached HEAD", systemImage: "arrow.triangle.branch")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .trailing, spacing: 2) {
+                HiveChip(text: branch ?? "Detached HEAD", tint: .hiveAmber, symbol: "arrow.triangle.branch")
                 if let detail {
                     Text(detail)
                         .font(.system(size: 10.5))
                         .foregroundStyle(.tertiary)
                 }
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             trailing
         }
-        .padding(.horizontal, 14)
-        .frame(height: 54)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+        .padding(.horizontal, 20)
+        .frame(height: 62)
+        .overlay(alignment: .bottom) { Divider().opacity(0.5) }
     }
 }
 
@@ -392,11 +419,9 @@ struct ReviewCockpitView: View {
                 branch: branch,
                 detail: environment.worktree.map { "worktree · \($0.branch)" }
             ) {
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
+                HiveCloseButton { dismiss() }
                     .padding(.leading, 6)
             }
-            Divider()
 
             if let loadError {
                 ContentUnavailableView(
@@ -409,8 +434,9 @@ struct ReviewCockpitView: View {
                 content
             }
 
-            Divider()
             commitBar
+                .background(Color.primary.opacity(0.025))
+                .overlay(alignment: .top) { Divider().opacity(0.5) }
         }
         .frame(minWidth: 940, minHeight: 640)
         .task(id: reloadToken) { await refresh() }
@@ -465,52 +491,52 @@ struct ReviewCockpitView: View {
     private var commitBar: some View {
         HStack(spacing: 10) {
             if let actionError {
-                Label(actionError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
+                HiveNotice(text: actionError)
+                    .frame(maxWidth: 420)
             } else {
                 Text(staged.isEmpty ? "Nothing staged" : "\(staged.count) staged · \(changes.count) changed")
-                    .font(.callout)
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
             }
             Spacer(minLength: 8)
-            Button("Stage All") { stageAll() }
+            Button { stageAll() } label: { Label("Stage All", systemImage: "plus") }
+                .buttonStyle(.hive)
                 .disabled(changes.isEmpty || isBusy)
-            Button("Unstage All") { unstageAll() }
+            Button { unstageAll() } label: { Label("Unstage All", systemImage: "minus") }
+                .buttonStyle(.hive)
                 .disabled(staged.isEmpty || isBusy)
-            Button("Commit…") { showingCommit = true }
-                .buttonStyle(.borderedProminent)
+            Button { showingCommit = true } label: { Label("Commit…", systemImage: "checkmark") }
+                .buttonStyle(.hivePrimary)
                 .disabled(staged.isEmpty)
         }
-        .padding(.horizontal, 14)
-        .frame(height: 46)
+        .padding(.horizontal, 20)
+        .frame(height: 52)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: staged.count)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: actionError)
     }
 
     // MARK: Context
 
     private var contextPanel: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                agentSummary
-                taskReport
+            HStack(alignment: .top, spacing: 12) {
+                agentSummary.hiveCard(padding: 12)
+                taskReport.hiveCard(padding: 12)
             }
-            .padding(14)
+            .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private var agentSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Agent")
-                .font(.system(size: 12, weight: .semibold))
+            HiveSectionTitle(title: "Agent", symbol: "sparkles")
             if let agent {
                 HStack(spacing: 7) {
-                    Circle().fill(agentStateColor(agent.state)).frame(width: 8, height: 8)
-                    Text(agent.name.isEmpty ? agent.kind : agent.name).font(.system(size: 12, weight: .medium))
-                    Text(agentStateTitle(agent.state))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                    AgentProviderIcon(kind: agent.kind, size: 12)
+                    Text(agent.name.isEmpty ? agent.kind : agent.name).font(.system(size: 12.5, weight: .semibold))
+                    HiveChip(text: agentStateTitle(agent.state), tint: agent.state == "working" || agent.state == "blocked" ? agentStateColor(agent.state) : nil)
                 }
                 if let reason = agent.reason, !reason.isEmpty {
                     Text(reason)
@@ -535,8 +561,7 @@ struct ReviewCockpitView: View {
 
     private var taskReport: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Task report")
-                .font(.system(size: 12, weight: .semibold))
+            HiveSectionTitle(title: "Task report", symbol: "checklist")
             if let task = reportTask {
                 Text(task.spec.title ?? task.spec.id)
                     .font(.system(size: 12, weight: .medium))
@@ -545,8 +570,7 @@ struct ReviewCockpitView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let changed = task.result?.changed, !changed.isEmpty {
-                    Text("Changed files")
-                        .font(.system(size: 11, weight: .semibold))
+                    HiveSectionTitle(title: "Changed files", count: changed.count)
                         .padding(.top, 2)
                     ForEach(changed, id: \.self) { path in
                         Button { selectPath(path) } label: {
@@ -556,13 +580,12 @@ struct ReviewCockpitView: View {
                                 .multilineTextAlignment(.leading)
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.hiveAmber)
                         .help("Show this file's diff")
                     }
                 }
                 if let screen = task.result?.screen, !screen.isEmpty {
-                    Text("Test output")
-                        .font(.system(size: 11, weight: .semibold))
+                    HiveSectionTitle(title: "Test output", symbol: "terminal")
                         .padding(.top, 2)
                     Text(screen.suffix(16).joined(separator: "\n"))
                         .font(.system(size: 10, design: .monospaced))

@@ -96,7 +96,7 @@ struct HiveOnboardingView: View {
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.035)))
 
             Label("Your existing Hive runtime and agents stay where they are.", systemImage: "checkmark.circle")
                 .font(.callout)
@@ -150,10 +150,10 @@ struct HiveOnboardingView: View {
                 Divider()
                 HStack(spacing: 10) {
                     TextField("Name", text: $viewModel.machineName)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.hive)
                         .frame(width: 150)
                     TextField("SSH host or user@host", text: $viewModel.machineHost)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.hive)
                         .onSubmit { Task { await viewModel.addMachine() } }
                     Button {
                         Task { await viewModel.addMachine() }
@@ -161,14 +161,14 @@ struct HiveOnboardingView: View {
                         if viewModel.isAddingMachine { ProgressView().controlSize(.small) }
                         else { Label("Add", systemImage: "plus") }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.hivePrimary)
                     .tint(Color(red: 0.96, green: 0.70, blue: 0.25))
                     .disabled(viewModel.machineName.trimmingCharacters(in: .whitespaces).isEmpty || viewModel.machineHost.trimmingCharacters(in: .whitespaces).isEmpty || viewModel.isAddingMachine)
                 }
                 .padding(14)
             }
-            .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.035)))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
 
             Text("Add saves the SSH destination through `hive machine add`. Check connects through `hive machine status`.")
                 .font(.callout)
@@ -206,12 +206,12 @@ struct HiveOnboardingView: View {
                     } label: {
                         Label("Import settings", systemImage: "square.and.arrow.down")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.hivePrimary)
                     .tint(Color(red: 0.96, green: 0.70, blue: 0.25))
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.035)))
                 feedback
             } else {
                 Label("No Herd config found", systemImage: "checkmark.circle")
@@ -242,7 +242,7 @@ struct HiveOnboardingView: View {
                 commandRow("hive machine list", detail: "See saved remote machines")
             }
             .padding(18)
-            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.035)))
 
             Text("Hive stores its runtime data in ~/.hive and its settings in ~/.config/hive/config.toml. The app uses the installed Hive CLI to reach that runtime.")
                 .font(.callout)
@@ -251,7 +251,7 @@ struct HiveOnboardingView: View {
 
             IntegrationHooksView(hiveURL: hiveURL)
                 .padding(18)
-                .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.035)))
         }
     }
 
@@ -266,7 +266,7 @@ struct HiveOnboardingView: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(command, forType: .string)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.hive)
         }
     }
 
@@ -316,7 +316,7 @@ struct HiveOnboardingView: View {
                 Label(viewModel.page == 3 ? "Open Hive" : "Next", systemImage: viewModel.page == 3 ? "arrow.up.right" : "arrow.right")
                     .labelStyle(.titleAndIcon)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.hivePrimary)
             .tint(Color(red: 0.96, green: 0.70, blue: 0.25))
         }
         .padding(.horizontal, 24)

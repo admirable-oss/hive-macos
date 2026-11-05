@@ -69,7 +69,7 @@ struct HiveDashboardView: View {
                     Text(notice).font(.callout)
                     Spacer()
                     Button("Update Hive") { Task { await viewModel.updateHive() } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.hivePrimary)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 9)
                 .background(Color.hiveAmber.opacity(0.16))
@@ -337,6 +337,8 @@ struct HiveDashboardView: View {
                     }
                 }
 
+                paneMenu
+
                 Button(action: viewModel.newTab) {
                     Image(systemName: "plus")
                         .font(.system(size: 10, weight: .bold))
@@ -381,6 +383,31 @@ struct HiveDashboardView: View {
         }
         .buttonStyle(ToolbarPillButtonStyle(isActive: inspectorPanel == panel))
         .help(inspectorPanel == panel ? "Hide \(panel.title.lowercased())" : "Show \(panel.title.lowercased())")
+    }
+
+    /// Splits, zooms and closes panes in the active Hive tab, tmux style.
+    private var paneMenu: some View {
+        let hiveTab = viewModel.activeHiveTab
+        let isSplit = (hiveTab?.paneIDs.count ?? 0) > 1
+        return Menu {
+            Button { viewModel.splitFocusedPane("right") } label: { Label("Split Right   ⌘D", systemImage: "rectangle.split.2x1") }
+            Button { viewModel.splitFocusedPane("down") } label: { Label("Split Down   ⇧⌘D", systemImage: "rectangle.split.1x2") }
+            Divider()
+            Button { viewModel.toggleZoom() } label: {
+                Label(hiveTab?.zoomed == nil ? "Zoom Pane   ⇧⌘M" : "Restore Layout   ⇧⌘M", systemImage: "arrow.up.left.and.arrow.down.right")
+            }
+            .disabled(!isSplit)
+            Button { viewModel.requestCloseFocusedPane() } label: { Label("Close Pane   ⌘W", systemImage: "xmark") }
+                .disabled(!isSplit)
+        } label: {
+            Image(systemName: isSplit ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
+                .font(.system(size: 12, weight: .medium))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .menuIndicator(.hidden)
+        .buttonStyle(ToolbarPillButtonStyle(isActive: isSplit))
+        .disabled(hiveTab == nil)
+        .help(hiveTab == nil ? "Splitting needs a Hive tab in an environment" : "Split pane")
     }
 
     /// M7 · The personal command center: saved views, helper delegations, activity and usage.
@@ -447,6 +474,17 @@ struct HiveDashboardView: View {
                 session: terminals.scratchSession(for: tab) { makeScratchSession(for: tab) },
                 panel: lastInspectorPanel,
                 changeToken: changeToken,
+                selectedChangePath: requestedChangePath,
+                viewModel: viewModel
+            )
+        } else if let paneID = viewModel.focusedPaneID {
+            // A Hive tab: follow the focused pane's shell, not the environment it started in.
+            // Get-or-create, since the tab view may not have drawn the pane yet.
+            ActiveTerminalInspector(
+                session: terminals.paneSession(paneID, viewModel: viewModel),
+                panel: lastInspectorPanel,
+                changeToken: changeToken,
+                selectedChangePath: requestedChangePath,
                 viewModel: viewModel
             )
         } else {
@@ -488,61 +526,60 @@ struct HiveDashboardView: View {
         VStack(spacing: 0) {
             List(selection: sidebarSelection) {
                 if showsEnvironmentsSection {
-                    Section {
-                        // "This computer" (Local machine) first
-                        machineHeader(name: "This computer", symbol: "desktopcomputer", isLocal: true)
-                            .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                    SidebarSectionHeader(title: "Spaces", symbol: "folder", actionIcon: "plus", action: { showingCreateEnvironment = true })
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
+                    
+                    // "This computer" (Local machine) first
+                    machineHeader(name: "This computer", symbol: "desktopcomputer", isLocal: true)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
+                    
+                    ForEach(localEnvironments) { environment in
+                        EnvironmentSidebarRow(environment: environment, ports: viewModel.listeningPorts[environment.id] ?? [])
+                            .tag(SidebarItem.environment(environment.id))
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
+                            .contextMenu { environmentMenu(environment) }
+                    }
+                    
+                    // Other machines
+                    ForEach(filteredMachines) { machine in
+                        machineHeader(
+                            name: machine.name,
+                            symbol: "server.rack",
+                            status: viewModel.machineStatuses[machine.name],
+                            isRefreshing: viewModel.refreshingMachines.contains(machine.name)
+                        )
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
                         
-                        ForEach(localEnvironments) { environment in
+                        ForEach(environments(for: machine)) { environment in
                             EnvironmentSidebarRow(environment: environment, ports: viewModel.listeningPorts[environment.id] ?? [])
                                 .tag(SidebarItem.environment(environment.id))
-                                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
                                 .contextMenu { environmentMenu(environment) }
                         }
-                        
-                        // Other machines
-                        ForEach(filteredMachines) { machine in
-                            machineHeader(
-                                name: machine.name,
-                                symbol: "server.rack",
-                                status: viewModel.machineStatuses[machine.name],
-                                isRefreshing: viewModel.refreshingMachines.contains(machine.name)
-                            )
-                            .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
-                            
-                            ForEach(environments(for: machine)) { environment in
-                                EnvironmentSidebarRow(environment: environment, ports: viewModel.listeningPorts[environment.id] ?? [])
-                                    .tag(SidebarItem.environment(environment.id))
-                                    .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
-                                    .contextMenu { environmentMenu(environment) }
-                            }
-                        }
-                    } header: {
-                        SidebarSectionHeader(title: "Spaces", symbol: "folder", actionIcon: "plus", action: { showingCreateEnvironment = true })
                     }
                 }
 
                 if showsAgentsSection {
-                    Section {
-                        ForEach(environmentsWithAgents, id: \.id) { environment in
-                            Text(environment.name.isEmpty ? environment.id : environment.name)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.tertiary)
-                                .padding(.top, 12)
-                                .padding(.bottom, 4)
-                                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
-                            
-                            ForEach(agents(in: environment)) { agent in
-                                AgentSidebarRow(agent: agent) { image in
-                                    Task { await viewModel.pasteImage(image, toAgent: agent.id) }
-                                }
-                                .tag(SidebarItem.agent(agent.id))
-                                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
-                                .contextMenu { agentMenu(agent) }
+                    SidebarSectionHeader(title: "Agents", symbol: "square.stack.3d.up", showsDivider: true)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
+                    
+                    ForEach(environmentsWithAgents, id: \.id) { environment in
+                        Text(environment.name.isEmpty ? environment.id : environment.name)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, 12)
+                            .padding(.bottom, 4)
+                            .kerning(0.5)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
+                        
+                        ForEach(agents(in: environment)) { agent in
+                            AgentSidebarRow(agent: agent) { image in
+                                Task { await viewModel.pasteImage(image, toAgent: agent.id) }
                             }
+                            .tag(SidebarItem.agent(agent.id))
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
+                            .contextMenu { agentMenu(agent) }
                         }
-                    } header: {
-                        SidebarSectionHeader(title: "Agents", symbol: "square.stack.3d.up", showsDivider: true)
                     }
                 }
             }
@@ -1189,10 +1226,11 @@ private struct ActiveTerminalInspector: View {
     @ObservedObject var session: TerminalSession
     let panel: InspectorPanel
     let changeToken: AnyHashable
+    let selectedChangePath: String?
     @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
-        WorkspaceInspectorView(panel: panel, directory: session.currentDirectory, changeToken: changeToken, selectedChangePath: nil, viewModel: viewModel)
+        WorkspaceInspectorView(panel: panel, directory: session.currentDirectory, changeToken: changeToken, selectedChangePath: selectedChangePath, viewModel: viewModel)
     }
 }
 
@@ -1211,8 +1249,8 @@ private struct NoTerminalsView: View {
             Text("Pick an environment or agent from the sidebar, or open a shell.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("New Terminal", action: onNewTerminal)
-                .buttonStyle(.borderedProminent)
+            Button(action: onNewTerminal) { Label("New Terminal", systemImage: "terminal") }
+                .buttonStyle(.hivePrimary)
                 .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1227,33 +1265,44 @@ private struct CreateEnvironmentSheet: View {
     let onCreate: (String, String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Add an environment").font(.title2.weight(.semibold))
-            Text("Choose a project folder. Hive will use it as the working directory for agents.")
-                .foregroundStyle(.secondary)
-            TextField("Environment name", text: $name)
-                .textFieldStyle(.roundedBorder)
-            HStack {
-                Text(folderPath.isEmpty ? "No folder selected" : folderPath)
-                    .font(.callout).foregroundStyle(folderPath.isEmpty ? .tertiary : .secondary)
-                    .lineLimit(1).truncationMode(.middle)
-                Spacer()
-                Button("Choose folder…", action: chooseFolder)
+        HiveFormSheet(
+            symbol: "folder.badge.plus",
+            title: "Add an environment",
+            subtitle: "Choose a project folder. Hive will use it as the working directory for agents.",
+            actionTitle: "Add environment",
+            actionSymbol: "plus",
+            canSubmit: !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !folderPath.isEmpty,
+            width: 480,
+            onCancel: { dismiss() },
+            onSubmit: {
+                onCreate(name.trimmingCharacters(in: .whitespacesAndNewlines), folderPath)
+                dismiss()
             }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Add environment") {
-                    onCreate(name.trimmingCharacters(in: .whitespacesAndNewlines), folderPath)
-                    dismiss()
+        ) {
+            HiveFieldLabel(title: "Folder") {
+                Button(action: chooseFolder) {
+                    HStack(spacing: 10) {
+                        Image(systemName: folderPath.isEmpty ? "folder.badge.questionmark" : "folder.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.hiveAmber)
+                            .contentTransition(.symbolEffect(.replace))
+                        Text(folderPath.isEmpty ? "Choose a project folder…" : folderPath)
+                            .foregroundStyle(folderPath.isEmpty ? .secondary : .primary)
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Text(folderPath.isEmpty ? "Choose…" : "Change…")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.hiveAmber)
+                    }
+                    .hiveCard(padding: 10, interactive: true)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || folderPath.isEmpty)
-                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.plain)
+            }
+            HiveFieldLabel(title: "Name") {
+                TextField("Environment name", text: $name)
+                    .textFieldStyle(.hive)
             }
         }
-        .padding(24)
-        .frame(width: 480)
     }
 
     private func chooseFolder() {
@@ -1287,32 +1336,48 @@ private struct StartAgentSheet: View {
     @State private var selectedKind = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Start an agent").font(.title2.weight(.semibold))
-            Text("Choose where it should work and which installed agent to start.")
-                .foregroundStyle(.secondary)
-            Picker("Environment", selection: $selectedEnvironment) {
-                ForEach(environments) { environment in
-                    Text(environment.name.isEmpty ? environment.id : environment.name).tag(environment.id)
+        HiveFormSheet(
+            symbol: "sparkles",
+            title: "Start an agent",
+            subtitle: "Choose where it should work and which installed agent to start.",
+            actionTitle: "Start agent",
+            actionSymbol: "play.fill",
+            canSubmit: !selectedEnvironment.isEmpty && !selectedKind.isEmpty,
+            width: 440,
+            onCancel: { dismiss() },
+            onSubmit: {
+                onStart(selectedKind, selectedEnvironment)
+                dismiss()
+            }
+        ) {
+            HiveFieldLabel(title: "Agent") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+                    ForEach(kinds) { kind in
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { selectedKind = kind.id }
+                        } label: {
+                            HStack(spacing: 8) {
+                                AgentProviderIcon(kind: kind.id, size: 13)
+                                Text(kind.name.isEmpty ? kind.id : kind.name)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .hiveCard(padding: 8, interactive: true, isSelected: selectedKind == kind.id)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
-            Picker("Agent", selection: $selectedKind) {
-                ForEach(kinds) { kind in Text(kind.name.isEmpty ? kind.id : kind.name).tag(kind.id) }
-            }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Start agent") {
-                    onStart(selectedKind, selectedEnvironment)
-                    dismiss()
+            HiveFieldLabel(title: "Environment") {
+                Picker("Environment", selection: $selectedEnvironment) {
+                    ForEach(environments) { environment in
+                        Text(environment.name.isEmpty ? environment.id : environment.name).tag(environment.id)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(selectedEnvironment.isEmpty || selectedKind.isEmpty)
-                .keyboardShortcut(.defaultAction)
+                .labelsHidden()
             }
         }
-        .padding(24)
-        .frame(width: 420)
         .onAppear {
             selectedEnvironment = environments.first(where: { $0.id == preferredEnvironmentID })?.id
                 ?? environments.first?.id
@@ -1322,13 +1387,14 @@ private struct StartAgentSheet: View {
         .overlay {
             if environments.isEmpty || kinds.isEmpty {
                 VStack(spacing: 10) {
-                    Image(systemName: environments.isEmpty ? "folder" : "sparkles")
-                        .font(.title2).foregroundStyle(.secondary)
+                    HiveBadgeIcon(symbol: environments.isEmpty ? "folder" : "sparkles", size: 36)
                     Text(environments.isEmpty ? "Add an environment first" : "No agents are available")
-                        .font(.headline)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
                     Text(environments.isEmpty ? "Choose a project folder from the sidebar to create one." : "Install an agent CLI and check `hive agent manifests`.")
-                        .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("Close") { dismiss() }.padding(.top, 4)
+                        .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("Close") { dismiss() }
+                        .buttonStyle(.hive)
+                        .padding(.top, 4)
                 }
                 .padding(26)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1349,33 +1415,38 @@ private struct NewWorktreeSheet: View {
     @State private var selectedKind = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("New worktree").font(.title2.weight(.semibold))
-            Text("Create a branch and worktree from \(environment.path).")
-                .font(.callout).foregroundStyle(.secondary).lineLimit(2)
-            TextField("Branch name", text: $branch).textFieldStyle(.roundedBorder)
-            TextField("Base branch (optional)", text: $base).textFieldStyle(.roundedBorder)
-            Toggle("Start an agent after creation", isOn: $startAgent)
+        HiveFormSheet(
+            symbol: "arrow.triangle.branch",
+            title: "New worktree",
+            subtitle: "Create a branch and worktree from \(environment.path).",
+            actionTitle: "Create worktree",
+            actionSymbol: "plus",
+            canSubmit: !branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !(startAgent && selectedKind.isEmpty),
+            onCancel: { dismiss() },
+            onSubmit: {
+                onCreate(branch.trimmingCharacters(in: .whitespacesAndNewlines), base.isEmpty ? nil : base, startAgent ? selectedKind : nil)
+                dismiss()
+            }
+        ) {
+            HStack(spacing: 10) {
+                HiveFieldLabel(title: "Branch") {
+                    TextField("feature/name", text: $branch).textFieldStyle(.hive)
+                }
+                HiveFieldLabel(title: "Base") {
+                    TextField("Optional", text: $base).textFieldStyle(.hive)
+                }
+            }
+            Toggle("Start an agent after creation", isOn: $startAgent.animation(.spring(response: 0.3, dampingFraction: 0.85)))
+                .toggleStyle(.switch)
+                .controlSize(.small)
             if startAgent {
                 Picker("Agent", selection: $selectedKind) {
                     ForEach(kinds) { kind in Text(kind.name.isEmpty ? kind.id : kind.name).tag(kind.id) }
                 }
                 .disabled(kinds.isEmpty)
-            }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Create worktree") {
-                    onCreate(branch.trimmingCharacters(in: .whitespacesAndNewlines), base.isEmpty ? nil : base, startAgent ? selectedKind : nil)
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (startAgent && selectedKind.isEmpty))
-                .keyboardShortcut(.defaultAction)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(24)
-        .frame(width: 440)
         .onAppear { selectedKind = kinds.first?.id ?? "" }
     }
 }
@@ -1387,25 +1458,26 @@ private struct AddMachineSheet: View {
     let onAdd: (String, String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Add a machine").font(.title2.weight(.semibold))
-            Text("Use an SSH host from ~/.ssh/config or enter user@host. Hive saves it through the CLI; you can connect to it from Hive afterward.")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            TextField("Name", text: $name).textFieldStyle(.roundedBorder)
-            TextField("SSH host or user@host", text: $host).textFieldStyle(.roundedBorder)
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Add machine") {
-                    onAdd(name.trimmingCharacters(in: .whitespacesAndNewlines), host.trimmingCharacters(in: .whitespacesAndNewlines))
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .keyboardShortcut(.defaultAction)
+        HiveFormSheet(
+            symbol: "server.rack",
+            title: "Add a machine",
+            subtitle: "Use an SSH host from ~/.ssh/config or enter user@host. Hive saves it through the CLI; you can connect to it afterward.",
+            actionTitle: "Add machine",
+            actionSymbol: "plus",
+            canSubmit: !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            width: 450,
+            onCancel: { dismiss() },
+            onSubmit: {
+                onAdd(name.trimmingCharacters(in: .whitespacesAndNewlines), host.trimmingCharacters(in: .whitespacesAndNewlines))
+                dismiss()
+            }
+        ) {
+            HiveFieldLabel(title: "Name") {
+                TextField("build-box", text: $name).textFieldStyle(.hive)
+            }
+            HiveFieldLabel(title: "SSH host") {
+                TextField("SSH host or user@host", text: $host).textFieldStyle(.hive)
             }
         }
-        .padding(24)
-        .frame(width: 430)
     }
 }

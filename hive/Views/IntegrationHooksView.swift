@@ -20,10 +20,10 @@ struct IntegrationHooksView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Agent hooks").font(.headline)
+                HiveSectionTitle(title: "Agent hooks", symbol: "puzzlepiece.extension", count: integrations.count)
                 Spacer()
                 Button { Task { await reload() } } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless).help("Refresh integration status")
+                    .buttonStyle(HiveIconButtonStyle()).help("Refresh integration status")
             }
             Text("Hive can add state-reporting hooks to supported agent settings. It backs up the original file and removes only Hive’s hooks when uninstalled.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -32,16 +32,21 @@ struct IntegrationHooksView: View {
             ForEach(integrations) { integration in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
+                        AgentProviderIcon(kind: integration.id, size: 13)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(integration.name).font(.callout.weight(.medium))
-                            Text("\(integration.state) · \(integration.hooks)/\(integration.want) hooks")
-                                .font(.caption).foregroundStyle(integration.state == "installed" ? .green : .secondary)
+                            Text(integration.name).font(.system(size: 12.5, weight: .semibold))
+                            Text("\(integration.hooks)/\(integration.want) hooks")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button(integration.state == "installed" ? "Uninstall" : "Install") {
-                            pending = (integration.id, integration.state == "installed")
+                        HiveChip(text: integration.state, tint: integration.state == "installed" ? .green : nil, symbol: integration.state == "installed" ? "checkmark" : nil)
+                        if integration.state == "installed" {
+                            Button("Uninstall", role: .destructive) { pending = (integration.id, true) }
+                                .buttonStyle(.hiveCompact)
+                        } else {
+                            Button("Install") { pending = (integration.id, false) }
+                                .buttonStyle(.hivePrimaryCompact)
                         }
-                        .controlSize(.small)
                     }
                     Text(integration.id == "claude"
                          ? "Reports session start, prompts, tool use, permission waits, and turn completion."
@@ -50,11 +55,10 @@ struct IntegrationHooksView: View {
                     Text(integration.path).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(2)
                     if let backup = integration.backup { Text("Backup: \(backup)").font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
                 }
-                .padding(10)
-                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .hiveCard(padding: 12, interactive: true)
             }
             if isWorking { ProgressView().controlSize(.small) }
-            if let errorMessage { Text(errorMessage).font(.callout).foregroundStyle(.red) }
+            if let errorMessage { HiveNotice(text: errorMessage) }
         }
         .task { await reload() }
         .confirmationDialog(

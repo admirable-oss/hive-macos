@@ -75,21 +75,19 @@ struct MenuBarAgentPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: store.needsAttention ? "bell.badge.fill" : "h.square.fill")
-                    .foregroundStyle(store.needsAttention ? Color.hiveAmber : Color.primary)
-                    .font(.system(size: 17, weight: .semibold))
+            HStack(spacing: 10) {
+                HiveBadgeIcon(symbol: store.needsAttention ? "bell.badge.fill" : "sparkles", size: 28)
+                    .symbolEffect(.bounce, value: store.needsAttention)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Hive agents").font(.headline)
-                    Text(connectionDescription).font(.caption).foregroundStyle(.secondary)
+                    Text("Hive agents").font(.system(size: 14, weight: .semibold, design: .rounded))
+                    Text(connectionDescription).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Open Hive") {
+                Button {
                     openWindow(id: "main")
                     NSApp.activate(ignoringOtherApps: true)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                } label: { Label("Open Hive", systemImage: "macwindow") }
+                .buttonStyle(.hiveCompact)
             }
 
             if store.agents.isEmpty {
@@ -97,32 +95,41 @@ struct MenuBarAgentPanel: View {
                     .frame(minHeight: 100)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 3) {
-                        ForEach(store.agents) { agent in agentRow(agent) }
+                    LazyVStack(spacing: 4) {
+                        ForEach(store.agents) { agent in
+                            agentRow(agent)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
+                    .animation(.spring(response: 0.32, dampingFraction: 0.85), value: store.agents.map(\.id))
+                    .animation(.spring(response: 0.32, dampingFraction: 0.85), value: store.agents.map(\.state))
                 }
                 .frame(maxHeight: 390)
             }
 
             if let actionError = store.actionError {
-                Text(actionError).font(.caption).foregroundStyle(.red).lineLimit(2)
+                HiveNotice(text: actionError)
             }
         }
         .padding(14)
-        .frame(width: 350)
+        .frame(width: 360)
     }
 
     private func agentRow(_ agent: HiveAgent) -> some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(agentStateColor(agent.state))
-                .frame(width: 7, height: 7)
-            if agent.state != "exited" { AgentProviderIcon(kind: agent.kind, size: 10) }
+        HStack(spacing: 9) {
+            AgentProviderIcon(kind: agent.kind, size: 12)
+                .opacity(agent.state == "exited" ? 0.4 : 1)
+                .overlay(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(agentStateColor(agent.state))
+                        .frame(width: 6, height: 6)
+                        .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1))
+                }
             VStack(alignment: .leading, spacing: 2) {
                 Text(agent.name.isEmpty ? agent.kind : agent.name)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
-                Text("\(agent.environmentID) · \(agentStateTitle(agent.state))")
+                Text(agent.environmentID)
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -132,21 +139,20 @@ struct MenuBarAgentPanel: View {
                 Button { Task { await store.send(["Enter"], to: agent.id) } } label: {
                     Image(systemName: "checkmark")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                .controlSize(.mini)
+                .buttonStyle(.hivePrimaryCompact)
                 .help("Approve the highlighted choice")
                 Button { Task { await store.send(["Escape"], to: agent.id) } } label: {
                     Image(systemName: "xmark")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
+                .buttonStyle(.hiveCompact)
                 .help("Deny the highlighted choice")
+            } else {
+                Text(agentStateTitle(agent.state))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .background(agent.state == "blocked" ? Color.hiveAmber.opacity(0.10) : Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+        .hiveCard(padding: 9, tint: agent.state == "blocked" ? .hiveAmber : nil, interactive: true)
     }
 
     private var connectionDescription: String {

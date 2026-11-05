@@ -25,14 +25,14 @@ struct DelegationView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 22) {
                     form
-                    Divider()
                     children
                 }
                 .padding(20)
+                .animation(.spring(response: 0.32, dampingFraction: 0.85), value: commandCenter.delegations.map(\.id))
+                .animation(.spring(response: 0.32, dampingFraction: 0.85), value: errorMessage)
             }
         }
         .frame(width: 620, height: 620)
@@ -44,23 +44,18 @@ struct DelegationView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.triangle.branch").foregroundStyle(Color.hiveAmber)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Delegate a helper task").font(.title3.weight(.semibold))
-                Text("Start a helper for an agent and return its report to the parent.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
-        }
-        .padding(16)
+        HiveSheetHeader(
+            symbol: "arrow.triangle.branch",
+            title: "Delegate a helper task",
+            subtitle: "Start a helper for an agent and return its report to the parent.",
+            onClose: { dismiss() }
+        )
     }
 
     private var form: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("New helper").font(.subheadline.weight(.semibold))
-
+        VStack(alignment: .leading, spacing: 10) {
+            HiveSectionTitle(title: "New helper", symbol: "plus.circle")
+            VStack(alignment: .leading, spacing: 12) {
             Picker("For agent", selection: $parentAgentID) {
                 Text("Choose a parent").tag("")
                 ForEach(runningAgents) { agent in
@@ -80,42 +75,44 @@ struct DelegationView: View {
             }
 
             TextField("Title (what the helper is doing)", text: $title)
-                .textFieldStyle(.roundedBorder)
-            TextField("Instruction for the helper (optional)", text: $instruction)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.hive)
+            TextField("Instruction for the helper (optional)", text: $instruction, axis: .vertical)
+                .textFieldStyle(.hive)
+                .lineLimit(1...4)
 
             permissionsNote
 
-            HStack {
+            HStack(spacing: 10) {
                 Button { Task { await startHelper() } } label: {
                     Label("Start helper", systemImage: "play.fill")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.hivePrimary)
                 .disabled(!canStart || isWorking)
                 if isWorking { ProgressView().controlSize(.small) }
-                if let errorMessage {
-                    Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
-                }
             }
+            if let errorMessage { HiveNotice(text: errorMessage) }
+            }
+            .hiveCard(padding: 14)
         }
     }
 
     private var permissionsNote: some View {
-        Label("This helper runs as \(kindName) in \(environmentName) — it can read and change that environment's files and terminals, exactly like an agent you start yourself.",
-              systemImage: "lock.open")
-            .font(.caption).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        HiveNotice(
+            text: "This helper runs as \(kindName) in \(environmentName) — it can read and change that environment's files and terminals, exactly like an agent you start yourself.",
+            kind: .info
+        )
     }
 
     private var children: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Helpers").font(.subheadline.weight(.semibold))
+        VStack(alignment: .leading, spacing: 10) {
+            HiveSectionTitle(title: "Helpers", symbol: "person.2", count: commandCenter.delegations.count)
             if commandCenter.delegations.isEmpty {
                 Text("No helpers yet. Start one above.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(.tertiary)
             } else {
                 ForEach(commandCenter.delegations) { delegation in
                     delegationCard(delegation)
+                        .transition(.scale(scale: 0.97).combined(with: .opacity))
                 }
             }
         }
@@ -125,11 +122,11 @@ struct DelegationView: View {
         let helper = delegation.helperAgentID.flatMap { id in viewModel.agents.first { $0.id == id } }
         return VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 8) {
-                Image(systemName: "arrow.turn.down.right").font(.system(size: 11)).foregroundStyle(.secondary)
+                AgentProviderIcon(kind: delegation.helperKind, size: 13)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(delegation.title).font(.callout.weight(.medium))
+                    Text(delegation.title).font(.system(size: 12.5, weight: .semibold))
                     Text("\(delegation.parentName) → \(kindLabel(delegation.helperKind)) · \(delegation.environmentID)")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
                 stateBadge(delegation, helper: helper)
@@ -139,30 +136,30 @@ struct DelegationView: View {
                 Text(instruction).font(.caption).foregroundStyle(.tertiary).lineLimit(2)
             }
             if let report = delegation.report, !report.isEmpty {
-                Text(report).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(4)
-                    .padding(7).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                Text(report).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(4)
+                    .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05)))
             }
 
             HStack(spacing: 7) {
                 if let helper, helper.state != "exited" {
                     Button("Steer") { steering = delegation; steerText = "" }
-                        .controlSize(.small)
-                    Button("Open") { viewModel.openAgent(helper.id) }.controlSize(.small)
+                        .buttonStyle(.hiveCompact)
+                    Button("Open") { viewModel.openAgent(helper.id) }
+                        .buttonStyle(.hiveCompact)
                     Button("Return report") { Task { await returnReport(delegation, helper: helper) } }
-                        .controlSize(.small)
+                        .buttonStyle(.hivePrimaryCompact)
                     Button("Stop", role: .destructive) { Task { await stop(delegation, helper: helper) } }
-                        .controlSize(.small)
+                        .buttonStyle(.hiveCompact)
                 } else {
-                    Text("Helper is not running").font(.caption).foregroundStyle(.tertiary)
+                    Text("Helper is not running").font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
                 Spacer()
                 Button("Forget", role: .destructive) { commandCenter.removeDelegation(delegation.id) }
-                    .controlSize(.small)
+                    .buttonStyle(.hiveCompact)
             }
         }
-        .padding(11)
-        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
+        .hiveCard(padding: 12, interactive: true)
         .alert("Steer “\(delegation.title)”", isPresented: Binding(get: { steering?.id == delegation.id }, set: { if !$0 { steering = nil } })) {
             TextField("Message", text: $steerText)
             Button("Cancel", role: .cancel) { steering = nil }
@@ -177,11 +174,11 @@ struct DelegationView: View {
 
     private func stateBadge(_ delegation: Delegation, helper: HiveAgent?) -> some View {
         let state = helper?.state ?? (delegation.state == .running ? "unknown" : delegation.state.rawValue)
-        return HStack(spacing: 5) {
-            Circle().fill(agentStateColor(state)).frame(width: 6, height: 6)
-            Text(delegation.state == .reported ? "Reported" : agentStateTitle(state))
-                .font(.system(size: 10.5)).foregroundStyle(.secondary)
-        }
+        return HiveChip(
+            text: delegation.state == .reported ? "Reported" : agentStateTitle(state),
+            tint: delegation.state == .reported ? .blue : (state == "working" || state == "blocked" ? agentStateColor(state) : nil),
+            symbol: "circle.fill"
+        )
     }
 
     private var canStart: Bool {

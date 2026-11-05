@@ -12,7 +12,6 @@ struct UsageView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     capacitySection
@@ -32,22 +31,23 @@ struct UsageView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "gauge.with.dots.needle.33percent").foregroundStyle(Color.hiveAmber)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Usage & capacity").font(.title3.weight(.semibold))
-                Text("Source: Hive daemon · updated \(refreshedAt.formatted(date: .omitted, time: .standard))")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+        HiveSheetHeader(
+            symbol: "gauge.with.dots.needle.33percent",
+            title: "Usage & capacity",
+            subtitle: "Source: Hive daemon · updated \(refreshedAt.formatted(date: .omitted, time: .standard))",
+            onClose: { dismiss() }
+        ) {
+            HiveChip(
+                text: viewModel.isConnected ? "Connected" : "Offline",
+                tint: viewModel.isConnected ? .green : .red,
+                symbol: viewModel.isConnected ? "bolt.fill" : "bolt.slash.fill"
+            )
         }
-        .padding(16)
     }
 
     private var capacitySection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Capacity").font(.subheadline.weight(.semibold))
+            HiveSectionTitle(title: "Capacity", symbol: "square.stack.3d.up")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 170, maximum: 260), spacing: 10)], spacing: 10) {
                 metric("Environments", "\(viewModel.environments.count)", "folder", "\(worktreeCount) worktrees")
                 metric("Agents", "\(viewModel.agents.count)", "sparkles", "\(workingCount) running · \(blockedCount) waiting")
@@ -62,20 +62,26 @@ struct UsageView: View {
     private func metric(_ title: String, _ value: String, _ symbol: String, _ caption: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(Color.hiveAmber)
-                Text(title).font(.caption).foregroundStyle(.secondary)
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.hiveAmber)
+                    .frame(width: 20, height: 20)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.hiveAmber.opacity(0.14)))
+                Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             }
-            Text(value).font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
+            Text(value)
+                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
             Text(caption).font(.system(size: 10.5)).foregroundStyle(.tertiary).lineLimit(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(11)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 9))
+        .hiveCard(padding: 12, interactive: true)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: value)
     }
 
     private var providerSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Providers").font(.subheadline.weight(.semibold))
+            HiveSectionTitle(title: "Providers", symbol: "sparkles", count: providers.count)
             Text("Usage and quota appear only when a provider exposes a reliable source.")
                 .font(.caption).foregroundStyle(.secondary)
             if providers.isEmpty {
@@ -85,23 +91,21 @@ struct UsageView: View {
                 ForEach(providers, id: \.self) { provider in
                     HStack(spacing: 10) {
                         AgentProviderIcon(kind: provider, size: 12)
-                        Text(provider.capitalized).font(.callout.weight(.medium))
+                        Text(provider.capitalized).font(.system(size: 12.5, weight: .medium))
                         Spacer()
-                        Label("No reliable usage source", systemImage: "questionmark.circle")
-                            .font(.caption).foregroundStyle(.secondary)
+                        HiveChip(text: "No reliable usage source", symbol: "questionmark")
                     }
-                    .padding(10)
-                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                    .hiveCard(padding: 10, interactive: true)
                 }
             }
         }
     }
 
     private var policyNote: some View {
-        Label("Hive Desktop never estimates usage from terminal output. Capacity numbers come from the daemon's live snapshot; provider quotas are shown only through a source the provider publishes.",
-              systemImage: "info.circle")
-            .font(.caption).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        HiveNotice(
+            text: "Hive Desktop never estimates usage from terminal output. Capacity numbers come from the daemon's live snapshot; provider quotas are shown only through a source the provider publishes.",
+            kind: .info
+        )
     }
 
     // MARK: Derived values

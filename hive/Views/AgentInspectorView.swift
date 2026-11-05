@@ -18,7 +18,7 @@ struct AgentInspectorView: View {
     private var isExited: Bool { agent.state == "exited" }
 
     var body: some View {
-        InspectorCard(title: "Agent", detail: agent.kind, onReload: { Task { await explain() } }) {
+        InspectorCard(title: "Agent", symbol: "sparkles", detail: agent.kind, onReload: { Task { await explain() } }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
@@ -30,6 +30,8 @@ struct AgentInspectorView: View {
                     footer
                 }
                 .padding(14)
+                .animation(.spring(response: 0.32, dampingFraction: 0.85), value: agent.state)
+                .animation(.spring(response: 0.32, dampingFraction: 0.85), value: reply?.outcome)
             }
         }
         .task(id: agent.state) { await explain() }
@@ -37,16 +39,22 @@ struct AgentInspectorView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(agentStateColor(agent.state))
-                .frame(width: 10, height: 10)
-                .shadow(color: agent.state == "working" ? agentStateColor(agent.state).opacity(0.7) : .clear, radius: 4)
-            VStack(alignment: .leading, spacing: 1) {
+            AgentProviderIcon(kind: agent.kind, size: 16)
+                .frame(width: 34, height: 34)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.06)))
+            VStack(alignment: .leading, spacing: 3) {
                 Text(agent.name.isEmpty ? agent.kind : agent.name)
-                    .font(.system(size: 15, weight: .semibold))
-                Text("\(agentStateTitle(agent.state)) · \(agent.environmentID)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                HStack(spacing: 6) {
+                    HiveChip(
+                        text: agentStateTitle(agent.state),
+                        tint: agent.state == "working" || agent.state == "blocked" || agent.state == "done" ? agentStateColor(agent.state) : nil,
+                        symbol: "circle.fill"
+                    )
+                    Text(agent.environmentID)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -63,17 +71,16 @@ struct AgentInspectorView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
-                Button("Approve") { Task { await viewModel.sendKeys(["Enter"], toAgent: agent.id) } }
-                    .buttonStyle(.borderedProminent)
+                Button { Task { await viewModel.sendKeys(["Enter"], toAgent: agent.id) } } label: { Label("Approve", systemImage: "checkmark") }
+                    .buttonStyle(.hivePrimaryCompact)
                     .help("Presses Enter, accepting the highlighted choice")
-                Button("Deny") { Task { await viewModel.sendKeys(["Escape"], toAgent: agent.id) } }
+                Button { Task { await viewModel.sendKeys(["Escape"], toAgent: agent.id) } } label: { Label("Deny", systemImage: "xmark") }
+                    .buttonStyle(.hiveCompact)
                     .help("Presses Escape")
             }
-            .controlSize(.small)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(agentStateColor(agent.state).opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .hiveCard(padding: 12, tint: agentStateColor(agent.state))
+        .transition(.scale(scale: 0.97).combined(with: .opacity))
     }
 
     private var details: some View {
@@ -98,7 +105,7 @@ struct AgentInspectorView: View {
                         } label: {
                             Image(systemName: "doc.on.doc")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(HiveIconButtonStyle(size: 18))
                         .help("Copy session ID")
                     }
                 }
@@ -108,6 +115,7 @@ struct AgentInspectorView: View {
             }
         }
         .font(.system(size: 12))
+        .hiveCard(padding: 12)
     }
 
     private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -121,8 +129,7 @@ struct AgentInspectorView: View {
 
     private func why(_ verdict: HiveAgentExplanation.Verdict) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Why \(agentStateTitle(verdict.state).lowercased())")
-                .font(.system(size: 12, weight: .semibold))
+            HiveSectionTitle(title: "Why \(agentStateTitle(verdict.state).lowercased())", symbol: "lightbulb")
             Text(verdict.description.flatMap { $0.isEmpty ? nil : $0 } ?? "Rule \(verdict.rule) of the \(explanation?.manifest ?? agent.kind) manifest matched.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -132,76 +139,69 @@ struct AgentInspectorView: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineLimit(4)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .hiveCard(padding: 8)
             }
         }
     }
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Prompt")
-                .font(.system(size: 12, weight: .semibold))
+            HiveSectionTitle(title: "Prompt", symbol: "text.bubble")
             TextEditor(text: $prompt)
                 .font(.system(size: 12))
                 .scrollContentBackground(.hidden)
-                .padding(6)
+                .padding(8)
                 .frame(minHeight: 70, maxHeight: 140)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.045)))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
                 .disabled(isBlocked)
             HStack {
                 Toggle("Wait for the answer", isOn: $waitForAnswer)
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
                     .font(.system(size: 11))
                 Spacer()
                 if isSending { ProgressView().controlSize(.small) }
-                Button("Send", action: send)
+                Button(action: send) { Label("Send", systemImage: "paperplane.fill") }
+                    .buttonStyle(.hivePrimaryCompact)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(isBlocked || isSending || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("Send  ⌘↩")
             }
-            .controlSize(.small)
             if isBlocked {
-                Text("Hive won’t send a prompt while the agent is waiting for a decision.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                HiveNotice(text: "Hive won’t send a prompt while the agent is waiting for a decision.", kind: .info)
             }
             if let promptError {
-                Text(promptError)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.red)
+                HiveNotice(text: promptError)
             }
         }
     }
 
     private func replyView(_ reply: HivePromptResult) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Answer · \(reply.outcome)")
-                .font(.system(size: 12, weight: .semibold))
+            HiveSectionTitle(title: "Answer · \(reply.outcome)", symbol: "text.bubble.fill")
             if let output = reply.output, !output.isEmpty {
                 Text(output.joined(separator: "\n"))
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .hiveCard(padding: 10)
             }
         }
     }
 
     private var footer: some View {
         HStack {
-            Button("Show Pane") { viewModel.openAgent(agent.id) }
+            Button { viewModel.openAgent(agent.id) } label: { Label("Show Pane", systemImage: "terminal") }
+                .buttonStyle(.hiveCompact)
             Spacer()
             if isExited {
-                Button("Resume Agent") { Task { await viewModel.resumeAgent(agent.id) } }
-                    .buttonStyle(.borderedProminent)
+                Button { Task { await viewModel.resumeAgent(agent.id) } } label: { Label("Resume Agent", systemImage: "play.fill") }
+                    .buttonStyle(.hivePrimaryCompact)
             } else {
                 Button("Stop Agent", role: .destructive) { Task { await viewModel.stopAgent(agent.id) } }
+                    .buttonStyle(.hiveCompact)
             }
         }
-        .controlSize(.small)
     }
 
     private func send() {

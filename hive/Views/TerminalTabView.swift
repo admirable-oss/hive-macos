@@ -231,6 +231,7 @@ final class PaneTerminalSession: TerminalSession, TerminalViewDelegate {
     private var processID: String?
     private var viewID: String?
     private var streamTask: Task<Void, Never>?
+    private var resizeTask: Task<Void, Never>?
     private var hasStarted = false
 
     override var restartTitle: String { "Reattach" }
@@ -248,7 +249,17 @@ final class PaneTerminalSession: TerminalSession, TerminalViewDelegate {
 
     override fileprivate var trackedPID: pid_t? {
         // The daemon runs on this Mac, so its pane processes are ours to inspect.
-        workspace.process(forPane: paneID).map { pid_t($0.pid) }
+        workspace.process(forPane: paneID).map { Self.shell(under: pid_t($0.pid)) }
+    }
+
+    /// Hive runs each pane's command under a `hive __shim` that stays in `/`; the shell that
+    /// follows `cd` is its child. Anything that isn't the shim is already the shell.
+    private static func shell(under pid: pid_t) -> pid_t {
+        var name = [CChar](repeating: 0, count: 256)
+        guard proc_name(pid, &name, UInt32(name.count)) > 0, String(cString: name) == "hive" else { return pid }
+        var children = [pid_t](repeating: 0, count: 8)
+        let count = proc_listchildpids(pid, &children, Int32(MemoryLayout<pid_t>.stride * children.count))
+        return count > 0 ? children[0] : pid
     }
 
     override func start() {
@@ -311,9 +322,16 @@ final class PaneTerminalSession: TerminalSession, TerminalViewDelegate {
         }
     }
 
+    /// Coalesced: while panes animate into a new split the view resizes every frame,
+    /// and Hive only needs the size it settles on.
     private func sendResize(cols: Int, rows: Int) {
-        guard let processID, let viewID, cols > 0, rows > 0 else { return }
-        Task { try? await workspace.resize(processID: processID, viewID: viewID, width: cols, height: rows) }
+        guard processID != nil, viewID != nil, cols > 0, rows > 0 else { return }
+        resizeTask?.cancel()
+        resizeTask = Task {
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled, let processID, let viewID else { return }
+            try? await workspace.resize(processID: processID, viewID: viewID, width: cols, height: rows)
+        }
     }
 
     // MARK: TerminalViewDelegate
@@ -354,6 +372,17 @@ final class TerminalStore: ObservableObject {
 
     func existingPaneSession(_ paneID: String) -> TerminalSession? {
         sessions["pane:\(paneID)"]
+    }
+
+    /// A Hive pane's terminal, attaching to it now if nothing has shown it yet. The tab view
+    /// and the inspector both come through here, so whichever renders first, they share one.
+    func paneSession(_ paneID: String, viewModel: AppViewModel) -> TerminalSession {
+        paneSession(paneID) {
+            let directory = viewModel.workspace.process(forPane: paneID)?.workingDirectory
+                ?? viewModel.activeEnvironment?.path
+                ?? FileManager.default.homeDirectoryForCurrentUser.path
+            return PaneTerminalSession(paneID: paneID, directory: directory, workspace: viewModel.workspace)
+        }
     }
 
     /// Where each open scratch shell is, for restoring tabs on the next launch.
@@ -519,7 +548,7 @@ struct TerminalSurface: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             Button(session.restartTitle, action: session.start)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.hivePrimary)
             Button(session.closeTitle, action: onClose)
         }
         .controlSize(.small)
@@ -638,7 +667,7 @@ private struct TerminalFindBar: View {
 
     @FocusState private var isFocused: Bool
 
-    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 9, style: .continuous) }
+    private var shape: Capsule { Capsule() }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -660,30 +689,30 @@ private struct TerminalFindBar: View {
 
             Button(action: { isCaseSensitive.toggle() }) {
                 Image(systemName: "textformat")
-                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isCaseSensitive ? SwiftUI.Color.hiveAmber : .secondary)
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(isCaseSensitive ? SwiftUI.Color.hiveAmber : .secondary)
+            .buttonStyle(HiveIconButtonStyle(size: 20))
             .help("Match case")
 
-            Divider().frame(height: 14)
+            Divider().frame(height: 14).opacity(0.5)
 
             Button(action: onPrevious) { Image(systemName: "chevron.up") }
-                .buttonStyle(.borderless)
+                .buttonStyle(HiveIconButtonStyle(size: 20))
                 .disabled(query.isEmpty)
                 .help("Previous match")
             Button(action: onNext) { Image(systemName: "chevron.down") }
-                .buttonStyle(.borderless)
+                .buttonStyle(HiveIconButtonStyle(size: 20))
                 .disabled(query.isEmpty)
                 .help("Next match")
             Button(action: onClose) { Image(systemName: "xmark") }
-                .buttonStyle(.borderless)
+                .buttonStyle(HiveIconButtonStyle(size: 20))
                 .help("Close")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.leading, 12)
+        .padding(.trailing, 5)
+        .padding(.vertical, 5)
         .background(.regularMaterial, in: shape)
-        .overlay(shape.strokeBorder(SwiftUI.Color.primary.opacity(0.12)))
+        .overlay(shape.strokeBorder(SwiftUI.Color.primary.opacity(0.1), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         .onExitCommand(perform: onClose)
         .onAppear { isFocused = true }

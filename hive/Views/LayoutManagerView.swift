@@ -12,27 +12,31 @@ struct LayoutManagerView: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Workspace layouts").font(.title2.weight(.semibold))
-            Text("Export the current Hive workspace or preview a layout file before applying it.")
-                .font(.callout).foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Button { Task { await exportLayout() } } label: {
-                    Label("Export current workspace…", systemImage: "square.and.arrow.up")
+        VStack(alignment: .leading, spacing: 0) {
+            HiveSheetHeader(
+                symbol: "rectangle.3.group",
+                title: "Workspace layouts",
+                subtitle: "Export the current Hive workspace or preview a layout file before applying it.",
+                onClose: { dismiss() }
+            )
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    layoutAction("Export workspace", detail: "Save every environment and tab to a file.", symbol: "square.and.arrow.up") {
+                        Task { await exportLayout() }
+                    }
+                    layoutAction("Preview a layout", detail: "Open a layout file and check it before applying.", symbol: "doc.text.magnifyingglass") {
+                        showingImporter = true
+                    }
                 }
                 .disabled(isWorking)
-                Button { showingImporter = true } label: {
-                    Label("Choose layout to preview…", systemImage: "doc.text.magnifyingglass")
-                }
-                .disabled(isWorking)
+                if isWorking { ProgressView().controlSize(.small) }
+                if let errorMessage { HiveNotice(text: errorMessage) }
             }
-            if isWorking { ProgressView().controlSize(.small) }
-            if let errorMessage { Label(errorMessage, systemImage: "exclamationmark.triangle.fill").font(.callout).foregroundStyle(.red) }
-            Spacer()
-            HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.cancelAction) }
+            .padding(20)
+            Spacer(minLength: 0)
         }
-        .padding(24)
-        .frame(width: 520, height: 220)
+        .frame(width: 540, height: 260)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: errorMessage)
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [UTType(filenameExtension: "json") ?? .json, .plainText]) { result in
             if case .success(let url) = result { loadPreview(url) }
         }
@@ -41,11 +45,31 @@ struct LayoutManagerView: View {
         }
     }
 
+    private func layoutAction(_ title: String, detail: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.hiveAmber)
+                    .frame(width: 28, height: 28)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.hiveAmber.opacity(0.14)))
+                Text(title).font(.system(size: 12.5, weight: .semibold))
+                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            .hiveCard(padding: 12, interactive: true)
+        }
+        .buttonStyle(.plain)
+    }
+
     private var layoutPreview: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Preview layout").font(.title2.weight(.semibold))
-            Text("Applying adds the environments and tabs from this file. Existing tabs are kept.")
-                .font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            HiveSheetHeader(
+                symbol: "doc.text.magnifyingglass",
+                title: "Preview layout",
+                subtitle: "Applying adds the environments and tabs from this file. Existing tabs are kept.",
+                onClose: { previewData = nil }
+            )
+            VStack(alignment: .leading, spacing: 12) {
             ScrollView {
                 Text(previewText)
                     .font(.system(size: 11, design: .monospaced))
@@ -54,16 +78,21 @@ struct LayoutManagerView: View {
                     .padding(10)
             }
             .frame(minHeight: 300)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.035)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
             HStack {
                 Spacer()
-                Button("Cancel") { previewData = nil }.keyboardShortcut(.cancelAction)
-                Button("Apply Layout") { Task { await applyLayout() } }
-                    .buttonStyle(.borderedProminent).disabled(isWorking)
+                Button("Cancel") { previewData = nil }
+                    .buttonStyle(.hive)
+                Button { Task { await applyLayout() } } label: { Label("Apply Layout", systemImage: "checkmark") }
+                    .buttonStyle(.hivePrimary)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isWorking)
             }
+            }
+            .padding(20)
         }
-        .padding(22)
-        .frame(width: 640, height: 520)
+        .frame(width: 640, height: 540)
     }
 
     private func loadPreview(_ url: URL) {

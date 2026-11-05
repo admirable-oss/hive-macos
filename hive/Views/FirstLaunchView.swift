@@ -31,11 +31,11 @@ struct FirstLaunchView: View {
 
             HStack(spacing: 10) {
                 Button("Install it for me", action: viewModel.installHive)
-                    .buttonStyle(AmberButtonStyle(amber: amber))
+                    .buttonStyle(.hivePrimary)
                     .disabled(viewModel.state == .installing || viewModel.state == .checking)
 
                 Button("I have it somewhere…", action: chooseHiveBinary)
-                    .buttonStyle(OutlineButtonStyle())
+                    .buttonStyle(.hive)
                     .disabled(viewModel.state == .installing || viewModel.state == .checking)
             }
 
@@ -99,31 +99,3 @@ struct FirstLaunchView: View {
     }
 }
 
-private struct AmberButtonStyle: ButtonStyle {
-    let amber: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Color(red: 0.12, green: 0.11, blue: 0.09))
-            .padding(.horizontal, 17)
-            .frame(height: 39)
-            .background(amber.opacity(configuration.isPressed ? 0.76 : 1), in: RoundedRectangle(cornerRadius: 8))
-            .scaleEffect(configuration.isPressed ? 0.985 : 1)
-    }
-}
-
-private struct OutlineButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.primary.opacity(configuration.isPressed ? 0.62 : 0.88))
-            .padding(.horizontal, 15)
-            .frame(height: 39)
-            .background(Color.primary.opacity(configuration.isPressed ? 0.08 : 0.035), in: RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-            }
-    }
-}

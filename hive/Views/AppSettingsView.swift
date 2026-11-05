@@ -73,6 +73,10 @@ struct AppSettingsView: View {
           .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
         }
         .formStyle(.grouped)
+        // Every pane's plain buttons and fields take the app's capsule and soft-field look.
+        .buttonStyle(.hive)
+        .textFieldStyle(.hive)
+        .tint(.hiveAmber)
         .frame(width: 720, height: 600)
         .preferredColorScheme(preferredColorScheme)
         .task { if hiveURL == nil { hiveURL = await HiveInstallationService.locateInstalledHive() } }

@@ -32,11 +32,11 @@ struct InboxView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
+        .tint(nil)
         .task { await poll() }
         .onKeyPress(.escape) {
             onClose()
@@ -45,45 +45,97 @@ struct InboxView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: "tray.full.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color.hiveAmber)
-                Text("Inbox").font(.system(size: 20, weight: .semibold, design: .rounded))
-                Spacer()
-                if !viewModel.isConnected {
-                    Label("Runtime unavailable", systemImage: "bolt.horizontal.circle")
-                        .font(.caption).foregroundStyle(.secondary)
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "tray.full.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.hiveAmber)
+                    Text("Inbox")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
                 }
-                Button { onClose() } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.borderless)
-                    .help("Close the inbox")
+                
+                Spacer()
+                
+                if !viewModel.isConnected {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt.horizontal.circle.fill")
+                        Text("Runtime unavailable")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.primary.opacity(0.05)))
+                }
+                
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .background(Circle().fill(Color.primary.opacity(0.06)))
+                }
+                .buttonStyle(.plain)
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: 0) {
                 ForEach(Filter.allCases) { item in
-                    Button { filter = item } label: {
-                        HStack(spacing: 5) {
-                            Text(item.title)
-                            let count = items(for: item).count
-                            if count > 0 {
-                                Text("\(count)").monospacedDigit().foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
-                    .buttonStyle(ToolbarPillButtonStyle(isActive: filter == item))
+                    filterButton(item)
                 }
-                Spacer()
-                if let errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.red).lineLimit(1)
+            }
+            .padding(2)
+            .background(Capsule().fill(Color.primary.opacity(0.04)))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.04), lineWidth: 0.5))
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+        .background {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+        }
+        .overlay(alignment: .bottom) {
+            Divider().opacity(0.5)
+        }
+    }
+
+    private func filterButton(_ item: Filter) -> some View {
+        Button {
+            withAnimation(.spring(duration: 0.3)) { filter = item }
+        } label: {
+            HStack(spacing: 6) {
+                Text(item.title)
+                let count = items(for: item).count
+                if count > 0 {
+                    Text("\(count)")
+                        .monospacedDigit()
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule().fill(filter == item ? Color.primary.opacity(0.1) : Color.primary.opacity(0.05))
+                        )
+                }
+            }
+            .font(.system(size: 12, weight: filter == item ? .bold : .medium))
+            .foregroundStyle(filter == item ? Color.primary : Color.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background {
+                if filter == item {
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .shadow(color: .black.opacity(0.05), radius: 1, y: 0.5)
+                        .matchedGeometryEffect(id: "filter_bg", in: filterNamespace)
                 }
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .buttonStyle(.plain)
     }
+
+    @Namespace private var filterNamespace
 
     @ViewBuilder
     private var content: some View {
@@ -127,11 +179,15 @@ struct InboxView: View {
     private func sourceHeader(_ source: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: source.hasPrefix("machine:") ? "server.rack" : "folder")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.hiveAmber)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.tertiary)
             Text(source.hasPrefix("machine:") ? String(source.dropFirst("machine:".count)) : source)
-                .font(.subheadline.weight(.semibold))
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.secondary)
+                .kerning(0.5)
         }
+        .padding(.leading, 4)
+        .padding(.bottom, 2)
     }
 
     // MARK: Items
@@ -360,58 +416,95 @@ struct InboxItem: Identifiable {
 
 private struct InboxRow: View {
     let item: InboxItem
+    @State private var isHovering = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: item.symbol)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(item.kind.tint)
-                .frame(width: 20)
+        HStack(alignment: .center, spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(item.kind.tint.opacity(0.12))
+                    .frame(width: 28, height: 28)
+                
+                Image(systemName: item.symbol)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(item.kind.tint)
+            }
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 7) {
-                    Text(item.title).font(.callout.weight(.medium)).lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(item.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.primary.opacity(0.9))
+                    
                     if let provider = item.provider, !provider.isEmpty {
                         AgentProviderIcon(kind: provider, size: 10)
+                            .opacity(0.8)
                     }
                 }
+                
                 if let subtitle = item.subtitle, !subtitle.isEmpty {
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(subtitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 20)
 
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 ForEach(item.actions) { action in
-                    InboxActionButton(action: action)
+                    InboxActionButton(action: action, tint: item.kind.tint)
                 }
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(item.kind == .attention ? Color.hiveAmber.opacity(0.08) : Color.primary.opacity(0.035),
-                    in: RoundedRectangle(cornerRadius: 9))
+        .padding(.vertical, 10)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.primary.opacity(isHovering ? 0.05 : 0.03))
+                
+                if item.kind == .attention {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(item.kind.tint.opacity(0.15), lineWidth: 1)
+                }
+            }
+        }
+        .onHover { isHovering = $0 }
+        .animation(.spring(duration: 0.2), value: isHovering)
     }
 }
 
 private struct InboxActionButton: View {
     let action: InboxAction
+    let tint: Color
+    @State private var isHovering = false
 
     var body: some View {
-        if action.prominent {
-            button.buttonStyle(.borderedProminent)
-        } else {
-            button.buttonStyle(.bordered)
-        }
-    }
-
-    private var button: some View {
         Button(action: action.run) {
-            Label(action.title, systemImage: action.symbol)
-                .font(.system(size: 11.5, weight: .medium))
+            HStack(spacing: 6) {
+                Image(systemName: action.symbol)
+                    .font(.system(size: 10, weight: .bold))
+                Text(action.title)
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .foregroundStyle(action.prominent ? Color.white : (isHovering ? Color.primary : Color.secondary))
+            .background {
+                if action.prominent {
+                    Capsule()
+                        .fill(tint.gradient)
+                        .shadow(color: tint.opacity(0.2), radius: 2, y: 1)
+                } else {
+                    Capsule()
+                        .fill(Color.primary.opacity(isHovering ? 0.08 : 0.04))
+                }
+            }
         }
-        .controlSize(.small)
-        .help(action.title)
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(.spring(duration: 0.2), value: isHovering)
     }
 }

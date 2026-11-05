@@ -11,70 +11,80 @@ struct NearbyMachinesSheet: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Nearby Hive machines").font(.title2.weight(.semibold))
-                    Text("Discovery only finds announcements. Pairing verifies and pins the runtime’s identity.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
+        VStack(alignment: .leading, spacing: 0) {
+            HiveSheetHeader(
+                symbol: "dot.radiowaves.left.and.right",
+                title: "Nearby Hive machines",
+                subtitle: "Discovery only finds announcements. Pairing verifies and pins the runtime’s identity.",
+                onClose: { dismiss() }
+            ) {
                 Button { Task { await viewModel.discoverMachines() } } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(HiveIconButtonStyle())
                     .help("Scan the local network again")
             }
+            ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
             if viewModel.nearbyMachines.isEmpty {
                 ContentUnavailableView("No announcements found", systemImage: "dot.radiowaves.left.and.right", description: Text("Only Hive runtimes with network discovery enabled appear here. You can also add a machine by SSH.")).frame(maxHeight: 180)
             } else {
-                List(viewModel.nearbyMachines) { machine in
+                ForEach(viewModel.nearbyMachines) { machine in
                     HStack(spacing: 10) {
-                        Image(systemName: "server.rack").foregroundStyle(.secondary)
+                        Image(systemName: "server.rack")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.hiveAmber)
+                            .frame(width: 28, height: 28)
+                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.hiveAmber.opacity(0.13)))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(machine.name).font(.callout.weight(.medium))
+                            Text(machine.name).font(.system(size: 12.5, weight: .semibold))
                             Text("\(machine.host):\(machine.port) · \(machine.id)")
                                 .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
                             if let note = machine.note, !note.isEmpty { Text(note).font(.caption).foregroundStyle(.secondary) }
                         }
                         Spacer()
                         if machine.machine != nil {
-                            Label("Paired", systemImage: "checkmark.seal.fill").font(.caption).foregroundStyle(.green)
+                            HiveChip(text: "Paired", tint: .green, symbol: "checkmark.seal.fill")
                         } else {
                             Button("Verify & Pair…") { beginPairing(machine) }
+                                .buttonStyle(.hivePrimaryCompact)
                                 .disabled(isChecking || !((machine.capabilities ?? []).contains("ssh")))
                         }
                     }
-                    .padding(.vertical, 4)
+                    .hiveCard(padding: 10, interactive: true, isSelected: selected?.id == machine.id)
                 }
-                .listStyle(.inset)
             }
             if isChecking { ProgressView("Verifying runtime identity…").controlSize(.small) }
             if let identity, let selected {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Identity verified", systemImage: "checkmark.shield.fill").font(.headline).foregroundStyle(.green)
+                    Label("Identity verified", systemImage: "checkmark.shield.fill")
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(.green)
                     LabeledContent("Runtime", value: identity.proof.name)
                     LabeledContent("Host", value: identity.proof.hostname ?? selected.host)
                     LabeledContent("Platform", value: identity.proof.platform)
                     LabeledContent("Hive", value: identity.proof.version)
                     LabeledContent("Identity", value: identity.fingerprint).textSelection(.enabled)
-                    TextField("Save as", text: $machineName).textFieldStyle(.roundedBorder)
+                    TextField("Save as", text: $machineName).textFieldStyle(.hive)
                     Text("Pairing saves this SSH machine and pins the verified identity shown above.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                     HStack {
                         Spacer()
                         Button("Cancel") { self.identity = nil; self.selected = nil }
-                        Button("Pair and Trust") { Task { await pair(selected, proof: identity) } }
-                            .buttonStyle(.borderedProminent).disabled(isPairing || machineName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .buttonStyle(.hive)
+                        Button { Task { await pair(selected, proof: identity) } } label: { Label("Pair and Trust", systemImage: "checkmark.shield") }
+                            .buttonStyle(.hivePrimary)
+                            .disabled(isPairing || machineName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
-                .padding(12)
-                .background(Color.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+                .font(.system(size: 12))
+                .hiveCard(padding: 14, tint: .green)
+                .transition(.scale(scale: 0.97).combined(with: .opacity))
             }
-            if let errorMessage { Text(errorMessage).font(.callout).foregroundStyle(.red) }
-            HStack {
-                Spacer()
-                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+            if let errorMessage { HiveNotice(text: errorMessage) }
+            }
+            .padding(20)
+            .animation(.spring(response: 0.32, dampingFraction: 0.85), value: identity?.fingerprint)
+            .animation(.spring(response: 0.32, dampingFraction: 0.85), value: viewModel.nearbyMachines.map(\.id))
             }
         }
-        .padding(20)
         .frame(width: 650, height: 590)
         .task { await viewModel.discoverMachines() }
     }

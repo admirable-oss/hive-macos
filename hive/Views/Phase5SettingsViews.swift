@@ -14,12 +14,12 @@ struct ConfigSettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Hive settings").font(.title2.weight(.semibold))
+                    Text("Hive settings").font(.system(size: 18, weight: .semibold, design: .rounded))
                     Text(path.isEmpty ? "Loading config path…" : path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
                 Spacer()
                 Button("Reload") { Task { await load() } }
-                Button("Save and Validate") { Task { await save() } }.buttonStyle(.borderedProminent).disabled(loading || path.isEmpty)
+                Button("Save and Validate") { Task { await save() } }.buttonStyle(.hivePrimary).disabled(loading || path.isEmpty)
             }
             Text("Changes are validated before saving. The previous config is kept as config.toml.bak.")
                 .font(.callout).foregroundStyle(.secondary)
@@ -209,7 +209,7 @@ struct SessionSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Sessions").font(.title2.weight(.semibold))
+            Text("Sessions").font(.system(size: 18, weight: .semibold, design: .rounded))
             Text("Each session has its own daemon, environments and agents. Switching changes the workspace shown by Hive.").foregroundStyle(.secondary)
             Picker("Active session", selection: $sessionName) {
                 ForEach(sessions) { session in Text(session.name + (session.running ? " · running" : " · stopped")).tag(session.name) }
@@ -284,7 +284,7 @@ struct UpkeepSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Runtime upkeep").font(.title2.weight(.semibold))
+            Text("Runtime upkeep").font(.system(size: 18, weight: .semibold, design: .rounded))
             Text(statusText).textSelection(.enabled)
             HStack {
                 Button("Refresh Status") { Task { await loadStatus() } }

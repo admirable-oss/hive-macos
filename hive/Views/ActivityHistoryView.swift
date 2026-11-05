@@ -19,7 +19,6 @@ struct ActivityHistoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
             HStack(spacing: 0) {
                 timeline.frame(minWidth: 380, maxWidth: .infinity)
                 Divider()
@@ -31,35 +30,44 @@ struct ActivityHistoryView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: "clock.arrow.circlepath").foregroundStyle(Color.hiveAmber)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Activity & sessions").font(.title3.weight(.semibold))
-                    Text("Recorded by Hive Desktop in this session.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
+        VStack(alignment: .leading, spacing: 0) {
+            HiveSheetHeader(
+                symbol: "clock.arrow.circlepath",
+                title: "Activity & sessions",
+                subtitle: "Recorded by Hive Desktop in this session.",
+                onClose: { dismiss() }
+            ) {
                 Button("Clear Log", role: .destructive) { commandCenter.clearActivity() }
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(.hiveCompact)
+                    .disabled(commandCenter.activity.isEmpty)
             }
 
-            HStack(spacing: 8) {
-                TextField("Filter by agent, environment or machine", text: $search)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 320)
-                Picker("Kind", selection: $kind) {
-                    Text("All").tag(ActivityEntry.Kind?.none)
-                    ForEach(ActivityEntry.Kind.allCases, id: \.self) { item in
-                        Text(item.title).tag(ActivityEntry.Kind?.some(item))
-                    }
+            HStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    TextField("Filter by agent, environment or machine", text: $search)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 360)
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .frame(maxWidth: 320)
+                .background(Capsule().fill(Color.primary.opacity(0.05)))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+
+                HiveSegmentedPicker(
+                    selection: $kind,
+                    options: [nil] + ActivityEntry.Kind.allCases.map { Optional($0) },
+                    title: { $0?.title ?? "All" }
+                )
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .overlay(alignment: .bottom) { Divider().opacity(0.5) }
         }
-        .padding(16)
     }
 
     private var timeline: some View {
@@ -72,15 +80,16 @@ struct ActivityHistoryView: View {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(groupedByDay, id: \.day) { group in
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(group.day.formatted(date: .abbreviated, time: .omitted))
-                                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                HiveSectionTitle(title: group.day.formatted(date: .abbreviated, time: .omitted), symbol: "calendar", count: group.entries.count)
                                 ForEach(group.entries) { entry in
                                     entryRow(entry)
+                                        .transition(.opacity.combined(with: .move(edge: .top)))
                                 }
                             }
                         }
                     }
                     .padding(16)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.85), value: filtered.map(\.id))
                 }
             }
         }
@@ -89,16 +98,15 @@ struct ActivityHistoryView: View {
     private func entryRow(_ entry: ActivityEntry) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: entry.kind.symbol)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(Color.hiveAmber)
-                .frame(width: 16)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.hiveAmber.opacity(0.13)))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(entry.title).font(.callout.weight(.medium)).lineLimit(2)
+                    Text(entry.title).font(.system(size: 12.5, weight: .semibold)).lineLimit(2)
                     if let machine = entry.machine {
-                        Text(machine).font(.system(size: 9, weight: .semibold))
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Color.primary.opacity(0.08), in: Capsule())
+                        HiveChip(text: machine, symbol: "server.rack")
                     }
                 }
                 if let detail = entry.detail, !detail.isEmpty {
@@ -112,49 +120,48 @@ struct ActivityHistoryView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+        .hiveCard(padding: 10, interactive: true)
     }
 
     private var sessionsPane: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Sessions").font(.subheadline.weight(.semibold))
+                HiveSectionTitle(title: "Sessions", symbol: "square.stack.3d.up", count: sessions.count)
                 Spacer()
                 if loadingSessions { ProgressView().controlSize(.small) }
-                Button("Refresh") { Task { await loadSessions() } }.controlSize(.small)
+                Button { Task { await loadSessions() } } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(HiveIconButtonStyle())
+                    .help("Refresh sessions")
             }
             if sessions.isEmpty {
-                Text("No sessions reported.").font(.caption).foregroundStyle(.secondary)
+                Text("No sessions reported.").font(.system(size: 12)).foregroundStyle(.tertiary)
             } else {
                 ForEach(sessions) { session in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            Text(session.name).font(.callout.weight(session.current ? .semibold : .regular))
+                            Circle()
+                                .fill(session.running ? Color.green : Color.secondary.opacity(0.5))
+                                .frame(width: 6, height: 6)
+                            Text(session.name).font(.system(size: 12.5, weight: session.current ? .semibold : .medium))
                             if session.current {
-                                Text("current").font(.system(size: 9, weight: .semibold))
-                                    .padding(.horizontal, 5).padding(.vertical, 1)
-                                    .background(Color.hiveAmber.opacity(0.18), in: Capsule())
+                                HiveChip(text: "current", tint: .hiveAmber)
                             }
                         }
                         Text(session.running ? "Running · PID \(session.pid ?? 0)" : "Stopped")
-                            .font(.caption).foregroundStyle(session.running ? .green : .secondary)
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
                         HStack(spacing: 6) {
                             Button("Switch") { switchTo(session) }
-                                .controlSize(.small)
+                                .buttonStyle(.hiveCompact)
                                 .disabled(session.current)
                             Button("Restore") { Task { await restore(session) } }
-                                .controlSize(.small)
+                                .buttonStyle(.hiveCompact)
                         }
                     }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                    .hiveCard(padding: 10, isSelected: session.current)
                 }
             }
             if let sessionMessage {
-                Text(sessionMessage).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                HiveNotice(text: sessionMessage, kind: .info)
             }
         }
         .padding(16)

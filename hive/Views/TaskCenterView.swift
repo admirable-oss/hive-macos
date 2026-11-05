@@ -16,19 +16,15 @@ struct TaskCenterView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Tasks and plans").font(.title2.weight(.semibold))
-                    Text(plan.map { "\($0.name ?? $0.id) · \($0.state)" } ?? "Open a plan file to start")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
+            HiveSheetHeader(
+                symbol: "checklist",
+                title: "Tasks and plans",
+                subtitle: plan.map { "\($0.name ?? $0.id) · \($0.state)" } ?? "Open or drop a plan file to start",
+                onClose: { dismiss() }
+            ) {
                 Button { showingPlanPicker = true } label: { Label("Open Plan…", systemImage: "doc.badge.plus") }
-                    .buttonStyle(.borderedProminent)
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                    .buttonStyle(.hivePrimary)
             }
-            .padding(18)
-            Divider()
 
             if !summaries.isEmpty {
                 ScrollView(.horizontal) {
@@ -38,23 +34,24 @@ struct TaskCenterView: View {
                                 Task { await loadPlan(summary.id) }
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(summary.name ?? summary.id).font(.callout.weight(.medium)).lineLimit(1)
-                                    Text("\(summary.state) · \(summary.total) tasks").font(.caption).foregroundStyle(.secondary)
+                                    Text(summary.name ?? summary.id).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                                    Text("\(summary.state) · \(summary.total) tasks").font(.system(size: 10.5)).foregroundStyle(.secondary)
                                 }
-                                .padding(.horizontal, 10).padding(.vertical, 7)
-                                .background(plan?.id == summary.id ? Color.accentColor.opacity(0.14) : Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                                .fixedSize()
+                                .hiveCard(padding: 9, interactive: true, isSelected: plan?.id == summary.id)
                             }
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(12)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
                 }
-                Divider()
+                .scrollIndicators(.never)
+                .overlay(alignment: .bottom) { Divider().opacity(0.5) }
             }
 
             if let errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout).foregroundStyle(.red).padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                HiveNotice(text: errorMessage).padding(.horizontal, 16).padding(.top, 10)
             }
 
             if let plan {
@@ -86,14 +83,18 @@ struct TaskCenterView: View {
     }
 
     private func taskGraph(_ plan: HiveTaskPlan) -> some View {
-        List(selection: $selectedTaskID) {
+        ScrollView {
+          LazyVStack(spacing: 6) {
             ForEach(plan.tasks) { task in
+              Button { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { selectedTaskID = task.id } } label: {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
-                        Image(systemName: symbol(for: task.state)).foregroundStyle(color(for: task.state))
-                        Text(task.spec.title ?? task.spec.id).font(.callout.weight(.medium)).lineLimit(1)
+                        Image(systemName: symbol(for: task.state))
+                            .foregroundStyle(color(for: task.state))
+                            .symbolEffect(.pulse, isActive: task.state == "running")
+                        Text(task.spec.title ?? task.spec.id).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
                         Spacer()
-                        Text(task.state).font(.caption).foregroundStyle(color(for: task.state))
+                        HiveChip(text: task.state, tint: color(for: task.state) == .secondary ? nil : color(for: task.state))
                     }
                     if let needs = task.spec.needs, !needs.isEmpty {
                         Text("↳ after \(needs.joined(separator: ", "))")
@@ -104,11 +105,14 @@ struct TaskCenterView: View {
                     }
                     actionButtons(for: task)
                 }
-                .padding(.vertical, 4)
-                .tag(task.id)
+                .hiveCard(padding: 10, interactive: true, isSelected: selectedTask?.id == task.id)
+              }
+              .buttonStyle(.plain)
             }
+          }
+          .padding(12)
+          .animation(.spring(response: 0.32, dampingFraction: 0.85), value: plan.tasks.map(\.state))
         }
-        .listStyle(.inset)
     }
 
     @ViewBuilder
@@ -116,15 +120,17 @@ struct TaskCenterView: View {
         HStack(spacing: 7) {
             if task.state == "approval" {
                 Button("Approve") { Task { await update(task, method: "task.approve", deny: false) } }
-                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .buttonStyle(.hivePrimaryCompact)
                 Button("Deny", role: .destructive) { Task { await update(task, method: "task.approve", deny: true) } }
-                    .controlSize(.small)
+                    .buttonStyle(.hiveCompact)
             }
             if ["waiting", "queued", "running", "blocked", "approval"].contains(task.state) {
-                Button("Cancel", role: .destructive) { Task { await update(task, method: "task.cancel") } }.controlSize(.small)
+                Button("Cancel", role: .destructive) { Task { await update(task, method: "task.cancel") } }
+                    .buttonStyle(.hiveCompact)
             }
             if ["failed", "cancelled", "skipped"].contains(task.state) {
-                Button("Retry") { Task { await update(task, method: "task.retry") } }.controlSize(.small)
+                Button("Retry") { Task { await update(task, method: "task.retry") } }
+                    .buttonStyle(.hiveCompact)
             }
         }
         .padding(.leading, 22)
@@ -135,11 +141,14 @@ struct TaskCenterView: View {
             if let task = selectedTask {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(task.spec.title ?? task.spec.id).font(.headline)
+                        HStack(spacing: 8) {
+                            Image(systemName: symbol(for: task.state)).foregroundStyle(color(for: task.state))
+                            Text(task.spec.title ?? task.spec.id).font(.system(size: 14, weight: .semibold, design: .rounded))
+                        }
                         Text(task.result?.summary ?? task.reason ?? task.result?.outcome ?? "No report yet.")
-                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         if let changed = task.result?.changed, !changed.isEmpty {
-                            Text("Changed files").font(.subheadline.weight(.semibold))
+                            HiveSectionTitle(title: "Changed files", symbol: "doc.on.doc", count: changed.count)
                             ForEach(changed, id: \.self) { path in
                                 Button {
                                     onOpenChanges(task, path)
@@ -147,14 +156,15 @@ struct TaskCenterView: View {
                                     Label(path, systemImage: "arrow.up.right.square")
                                         .font(.system(size: 11, design: .monospaced)).lineLimit(2).multilineTextAlignment(.leading)
                                 }
-                                .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                                .buttonStyle(.plain).foregroundStyle(Color.hiveAmber)
                                 .help("Open this task's environment in the Changes inspector")
                             }
                         }
                         if let screen = task.result?.screen, !screen.isEmpty {
                             Text(screen.suffix(8).joined(separator: "\n"))
                                 .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                                .hiveCard(padding: 10)
                         }
                     }
                     .padding(16)

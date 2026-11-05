@@ -494,6 +494,11 @@ final class AppViewModel: ObservableObject {
     /// `direction` is where the new pane goes: right or down.
     func splitFocusedPane(_ direction: String) {
         guard let paneID = focusedPaneID else { return }
+        splitPane(paneID, direction: direction)
+    }
+
+    /// Splits a particular pane, as its hover controls do, whether or not it has focus.
+    func splitPane(_ paneID: String, direction: String) {
         Task { await perform { try await self.workspace.splitPane(paneID, direction: direction) } }
     }
 
@@ -508,7 +513,13 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleZoom() {
-        guard let tab = activeHiveTab, let paneID = focusedPaneID, tab.paneIDs.count > 1 else { return }
+        guard let paneID = focusedPaneID else { return }
+        toggleZoom(paneID)
+    }
+
+    /// Zooms a pane to fill its tab, or puts a zoomed tab back to its layout.
+    func toggleZoom(_ paneID: String) {
+        guard let tab = activeHiveTab, tab.paneIDs.count > 1 else { return }
         let zoomed = tab.zoomed != nil
         Task { await perform { try await self.workspace.zoomPane(paneID, on: !zoomed) } }
     }

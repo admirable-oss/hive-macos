@@ -7,6 +7,7 @@ struct QuickOpenView: View {
     @State private var query = ""
     @State private var selection = 0
     @FocusState private var isSearchFocused: Bool
+    @Namespace private var selectionNamespace
 
     private struct Item: Identifiable {
         enum Kind { case agent, pane, tab, environment, machine }
@@ -88,7 +89,8 @@ struct QuickOpenView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.hiveAmber)
                 TextField("Jump to an agent, pane, tab, environment or machine", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 16))
@@ -97,33 +99,54 @@ struct QuickOpenView: View {
                     .onKeyPress(.downArrow) { move(1, in: results); return .handled }
                     .onKeyPress(.upArrow) { move(-1, in: results); return .handled }
                     .onKeyPress(.escape) { viewModel.showingQuickOpen = false; return .handled }
+                HiveChip(text: "esc")
             }
-            .padding(.horizontal, 16)
-            .frame(height: 50)
+            .padding(.horizontal, 18)
+            .frame(height: 54)
 
             if !results.isEmpty {
-                Divider()
+                Divider().opacity(0.5)
                 VStack(spacing: 2) {
                     ForEach(Array(results.enumerated()), id: \.element.id) { index, item in
                         row(item, isSelected: index == selection)
                             .contentShape(Rectangle())
                             .onTapGesture { selection = index; open(results) }
                             .onHover { if $0 { selection = index } }
+                            .transition(.opacity.combined(with: .offset(y: -4)))
                     }
                 }
                 .padding(6)
+                .animation(.spring(response: 0.28, dampingFraction: 0.85), value: results.map(\.id))
+                .animation(.spring(response: 0.22, dampingFraction: 0.85), value: selection)
             } else if !query.isEmpty {
-                Divider()
-                Text("Nothing matches “\(query)”")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
+                Divider().opacity(0.5)
+                VStack(spacing: 6) {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                    Text("Nothing matches “\(query)”")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
             }
         }
-        .frame(width: 560)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+        .frame(width: 580)
+        .background {
+            if #available(macOS 26, *) {
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.clear)
+                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            } else {
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.regularMaterial)
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(LinearGradient(colors: [Color.white.opacity(0.18), Color.primary.opacity(0.06)], startPoint: .top, endPoint: .bottom), lineWidth: 0.75)
+        )
         .shadow(color: .black.opacity(0.25), radius: 30, y: 12)
+        .transition(.scale(scale: 0.96).combined(with: .opacity))
         .onAppear { isSearchFocused = true }
         .onChange(of: query) { selection = 0 }
     }
@@ -131,9 +154,10 @@ struct QuickOpenView: View {
     private func row(_ item: Item, isSelected: Bool) -> some View {
         HStack(spacing: 10) {
             Image(systemName: item.symbol)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(item.tint)
-                .frame(width: 18)
+                .frame(width: 26, height: 26)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(item.tint.opacity(0.13)))
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                     .font(.system(size: 13, weight: .medium))
@@ -147,16 +171,21 @@ struct QuickOpenView: View {
             Spacer(minLength: 0)
             if isSelected {
                 Image(systemName: "return")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.hiveAmber)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
         }
         .padding(.horizontal, 10)
-        .frame(height: 40)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected ? Color.hiveAmber.opacity(0.18) : .clear)
-        )
+        .frame(height: 44)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.hiveAmber.opacity(0.16))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.hiveAmber.opacity(0.28), lineWidth: 0.5))
+                    .matchedGeometryEffect(id: "quick-open-selection", in: selectionNamespace)
+            }
+        }
     }
 
     private func move(_ offset: Int, in results: [Item]) {

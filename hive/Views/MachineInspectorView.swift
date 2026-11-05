@@ -11,20 +11,15 @@ struct MachineInspectorView: View {
     @State private var actionError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 10) {
-                Image(systemName: "server.rack")
-                    .font(.title2)
-                    .foregroundStyle(Color.hiveAmber)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(machine.name).font(.title2.weight(.semibold))
-                    Text(machine.host).foregroundStyle(.secondary)
-                }
-                Spacer()
+        VStack(alignment: .leading, spacing: 0) {
+        HiveSheetHeader(symbol: "server.rack", title: machine.name, subtitle: machine.host, onClose: { viewModel.inspectedMachine = nil }) {
+            if let status = viewModel.machineStatus, status.name == machine.name {
+                HiveChip(text: status.reachable ? "Reachable" : "Unavailable", tint: status.reachable ? .green : .red, symbol: "circle.fill")
             }
-
-            Divider()
-
+        }
+        ScrollView {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
             LabeledContent("Session", value: machine.session ?? "Default")
             if let status = viewModel.machineStatus, status.name == machine.name {
                 LabeledContent("Connection") {
@@ -41,33 +36,37 @@ struct MachineInspectorView: View {
             } else {
                 Text("Connection has not been checked.").foregroundStyle(.secondary)
             }
+            }
+            .font(.system(size: 12))
+            .hiveCard(padding: 12)
 
             if let agents = viewModel.machineAgents[machine.name], !agents.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Agents").font(.headline)
+                    HiveSectionTitle(title: "Agents", symbol: "sparkles", count: agents.count)
                     ForEach(agents) { agent in
-                        HStack {
-                            Circle().fill(agentStateColor(agent.state)).frame(width: 7, height: 7)
-                            Text(agent.name.isEmpty ? agent.kind : agent.name)
+                        HStack(spacing: 8) {
+                            AgentProviderIcon(kind: agent.kind, size: 12)
+                            Text(agent.name.isEmpty ? agent.kind : agent.name).font(.system(size: 12.5, weight: .medium))
                             Spacer()
-                            Text(agentStateTitle(agent.state)).foregroundStyle(.secondary)
+                            HiveChip(text: agentStateTitle(agent.state), tint: agent.state == "working" || agent.state == "blocked" ? agentStateColor(agent.state) : nil)
                             Button("Open") { viewModel.openRemoteAgent(agent, on: machine) }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.hiveCompact)
                         }
-                        .font(.callout)
+                        .hiveCard(padding: 8, interactive: true)
                     }
                 }
             }
             if viewModel.machineAgents[machine.name]?.isEmpty != false {
                 Text("No remote agents are currently available to attach.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.system(size: 12)).foregroundStyle(.tertiary)
             }
 
             VStack(alignment: .leading, spacing: 9) {
-                Text("Remote workspace").font(.headline)
+                HiveSectionTitle(title: "Remote workspace", symbol: "folder.badge.plus")
+                VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    TextField("Environment ID", text: $environmentID)
-                    TextField("Absolute remote path", text: $environmentPath)
+                    TextField("Environment ID", text: $environmentID).textFieldStyle(.hive)
+                    TextField("Absolute remote path", text: $environmentPath).textFieldStyle(.hive)
                 }
                 Button("Create Environment") {
                     Task {
@@ -75,6 +74,7 @@ struct MachineInspectorView: View {
                         if let error = viewModel.sidebarError { actionError = error } else { environmentID = ""; environmentPath = "" }
                     }
                 }
+                .buttonStyle(.hiveCompact)
                 .disabled(environmentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !environmentPath.hasPrefix("/"))
 
                 HStack {
@@ -90,17 +90,20 @@ struct MachineInspectorView: View {
                             actionError = viewModel.sidebarError
                         }
                     }
+                    .buttonStyle(.hivePrimaryCompact)
                     .disabled(selectedEnvironmentID.isEmpty || selectedAgentKind.isEmpty)
                 }
                 Button { viewModel.openRemoteShell(machine) } label: { Label("Open SSH Shell", systemImage: "terminal") }
-                    .buttonStyle(.bordered)
-                if let actionError { Text(actionError).font(.caption).foregroundStyle(.red) }
+                    .buttonStyle(.hiveCompact)
+                if let actionError { HiveNotice(text: actionError) }
+                }
+                .hiveCard(padding: 12)
             }
-            .font(.callout)
+            .font(.system(size: 12))
 
             if let environments = viewModel.machineEnvironments[machine.name], !environments.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Environments").font(.headline)
+                    HiveSectionTitle(title: "Environments", symbol: "folder", count: environments.count)
                     ForEach(environments) { env in
                         LabeledContent(env.name.isEmpty ? env.id : env.name, value: env.path)
                             .font(.caption)
@@ -110,15 +113,18 @@ struct MachineInspectorView: View {
 
             HStack {
                 Spacer()
-                Button("Close") { viewModel.inspectedMachine = nil }
-                    .keyboardShortcut(.cancelAction)
-                Button("Check Connection") { Task { await viewModel.refreshMachineStatus() } }
-                    .disabled(viewModel.checkingMachine)
-                    .keyboardShortcut(.defaultAction)
+                Button { Task { await viewModel.refreshMachineStatus() } } label: {
+                    Label("Check Connection", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .buttonStyle(.hivePrimary)
+                .disabled(viewModel.checkingMachine)
+                .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(24)
-        .frame(width: 440)
+        .padding(20)
+        }
+        }
+        .frame(width: 460, height: 600)
         .task(id: machine.name) {
             if viewModel.machineStatus?.name != machine.name {
                 await viewModel.refreshMachineStatus()

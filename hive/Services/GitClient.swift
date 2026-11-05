@@ -151,8 +151,10 @@ struct GitClient {
         return trimmed?.isEmpty == false ? trimmed : nil
     }
 
+    /// `--no-optional-locks` keeps status from rewriting the index, so polling it never
+    /// fights a git command in the terminal or wakes a file watcher.
     func status(root: String) async throws -> [GitChange] {
-        let output = try await git.run(["-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        let output = try await git.run(["--no-optional-locks", "-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all"])
         return GitChange.parse(output)
     }
 
