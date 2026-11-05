@@ -672,6 +672,9 @@ private struct FileTreeRow: View {
         .help(node.url.path)
         .contextMenu {
             Button("Open") { onOpen() }
+            if !node.isDirectory {
+                OpenInEditorMenu(url: node.url)
+            }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([node.url]) }
             if node.isDirectory {
                 Button(isExpanded ? "Collapse" : "Expand") { onToggle() }
@@ -1035,6 +1038,9 @@ private struct ChangesView: View {
         }
         Divider()
         Button("Open") { targets.forEach(open) }
+        if targets.count == 1 {
+            OpenInEditorMenu(url: fileURL(for: change))
+        }
         Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting(targets.map(fileURL)) }
         Button("Copy Path") {
             NSPasteboard.general.clearContents()
@@ -1089,6 +1095,7 @@ private struct ChangesView: View {
                 error: diffError,
                 area: change.area,
                 isBusy: isBusy,
+                root: repositoryRoot ?? directory,
                 onApplyHunks: applyHunks
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)

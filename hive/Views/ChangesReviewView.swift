@@ -149,6 +149,8 @@ struct DiffPaneView: View {
     var isBusy = false
     var placeholder = "Select a Changed File"
     var placeholderDescription = "Its Git diff appears here."
+    /// The repository's root; with it, lines and hunks open in the user's editor.
+    var root: String?
     var onApplyHunks: (FileDiff, DiffHunk) -> Void = { _, _ in }
 
     private var files: [FileDiff] { FileDiff.parse(diffText) }
@@ -208,15 +210,37 @@ struct DiffPaneView: View {
                     .font(.system(size: 10.5, design: .monospaced))
                     .foregroundStyle(header.foreground)
                     .textSelection(.enabled)
+                if let url = fileURL(file), let start = hunk.newStart {
+                    Button {
+                        Editor.preferred.open(url, line: start)
+                    } label: {
+                        Image(systemName: "arrow.up.forward.square")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open in \(Editor.preferred.name) at line \(start)")
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 2)
             .background(header.background)
 
+            let numbers = hunk.newLineNumbers
             ForEach(Array(hunk.lines.enumerated()), id: \.offset) { index, line in
                 row(DiffLine(id: index, text: line))
+                    .contextMenu {
+                        if let url = fileURL(file) {
+                            OpenInEditorMenu(url: url, line: numbers[index])
+                        }
+                    }
             }
         }
+    }
+
+    private func fileURL(_ file: FileDiff) -> URL? {
+        guard let root, let path = file.path, path != "/dev/null" else { return nil }
+        return URL(fileURLWithPath: root).appendingPathComponent(path)
     }
 
     private func row(_ line: DiffLine) -> some View {
@@ -275,7 +299,8 @@ struct CommitSheet: View {
                     error: loadError,
                     area: nil,
                     placeholder: "Nothing Staged",
-                    placeholderDescription: "Stage changes before committing."
+                    placeholderDescription: "Stage changes before committing.",
+                    root: root
                 )
                 .frame(minHeight: 220)
             }
@@ -478,6 +503,7 @@ struct ReviewCockpitView: View {
                     area: selectedChange?.area,
                     isBusy: isBusy,
                     placeholder: "Select a Changed File",
+                    root: root ?? environment.path,
                     onApplyHunks: applyHunks
                 )
                 .frame(minHeight: 240)

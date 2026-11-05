@@ -8,6 +8,7 @@ struct AppSettingsView: View {
     @AppStorage("hive.session.name") private var sessionName = "default"
     @AppStorage(AppViewModel.syncTabFocusKey) private var syncTabFocus = true
     @AppStorage(PaneTerminalSession.inlineImagesKey) private var inlineImages = true
+    @AppStorage(Editor.preferenceKey) private var editor = Editor.preferred.rawValue
 
     private var preferredColorScheme: ColorScheme? {
         switch appearance {
@@ -34,6 +35,9 @@ struct AppSettingsView: View {
             }
 
             Section("Workspace") {
+                Picker("Open files in", selection: $editor) {
+                    ForEach(Editor.installed) { editor in Text(editor.name).tag(editor.rawValue) }
+                }
                 Toggle("Show images agents draw in their terminals", isOn: $inlineImages)
                 Toggle("Switching tabs here switches Hive’s active tab", isOn: $syncTabFocus)
                 Text("The TUI and other clients follow the tab in front of the app. Turn this off to keep them independent, for example when you run the TUI next to the app.")

@@ -119,6 +119,8 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
         let wantsBlocked = agent.state == "blocked" && wantsState
         let wantsDone = agent.state == "done" && wantsState
         guard wantsBlocked || wantsDone, !isShowing(agent) else { return }
+        // A Focus with Hive's filter may quiet this environment, or everything but decisions.
+        guard FocusFilterSettings.allows(state: agent.state, environmentID: agent.environmentID) else { return }
 
         let content = UNMutableNotificationContent()
         content.title = agent.name.isEmpty ? agent.kind : agent.name
@@ -140,6 +142,7 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     /// Tells the user an agent watch they set ("notify me when…") has ended, however it ended.
     func notifyWatchEnded(agent: HiveAgent, condition: String, outcome: String) {
+        guard FocusFilterSettings.allows(state: agent.state, environmentID: agent.environmentID) else { return }
         let content = UNMutableNotificationContent()
         content.title = agent.name.isEmpty ? agent.kind : agent.name
         content.subtitle = agent.environmentID

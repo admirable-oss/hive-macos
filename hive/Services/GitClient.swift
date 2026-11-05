@@ -62,6 +62,24 @@ struct DiffHunk: Identifiable, Hashable {
 
     var body: String { ([header] + lines).joined(separator: "\n") }
     var additionCount: Int { lines.filter { $0.hasPrefix("+") }.count }
+
+    /// Where the hunk starts in the new file: the `c` of `@@ -a,b +c,d @@`.
+    var newStart: Int? {
+        guard let plus = header.split(separator: " ").first(where: { $0.hasPrefix("+") }) else { return nil }
+        return Int(plus.dropFirst().split(separator: ",").first ?? "")
+    }
+
+    /// Each body line's number in the new file. A removed line has none of its own, so it
+    /// takes the number of the line now in its place.
+    var newLineNumbers: [Int?] {
+        guard var next = newStart else { return lines.map { _ in nil } }
+        return lines.map { line in
+            if line.hasPrefix("-") { return next }
+            if line.hasPrefix("\\") { return nil }
+            defer { next += 1 }
+            return next
+        }
+    }
     var removalCount: Int { lines.filter { $0.hasPrefix("-") }.count }
 }
 

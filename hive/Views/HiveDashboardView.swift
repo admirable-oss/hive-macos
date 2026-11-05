@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -110,6 +111,12 @@ struct HiveDashboardView: View {
             }
             .frame(minWidth: 820, minHeight: 540)
             .focusedSceneObject(viewModel)
+            .onAppear { DeepLinkRouter.shared.hasWindow = true }
+            .onDisappear { DeepLinkRouter.shared.hasWindow = false }
+            .onReceive(DeepLinkRouter.shared.$pending.compactMap { $0 }) { link in
+                DeepLinkRouter.shared.pending = nil
+                Task { await viewModel.open(link) }
+            }
     }
 
     private var workspaceSheets: some View {
@@ -868,6 +875,7 @@ struct HiveDashboardView: View {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: environment.path)])
         }
         Button("Copy Path") { copyToPasteboard(environment.path) }
+        Button("Copy Link") { DeepLink.environment(environment.id).copy() }
 
         Divider()
 
@@ -909,6 +917,7 @@ struct HiveDashboardView: View {
         Divider()
 
         Button("Copy Agent ID") { copyToPasteboard(agent.id) }
+        Button("Copy Link to Agent") { DeepLink.agent(agent.id).copy() }
     }
 
     private func startAgent(in environmentID: String?) {
@@ -1665,10 +1674,7 @@ private struct CreateEnvironmentSheet: View {
     }
 
     private func environmentID(from folderName: String) -> String {
-        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
-        let normalized = String(folderName.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" })
-            .trimmingCharacters(in: CharacterSet(charactersIn: ".-_"))
-        return String((normalized.isEmpty ? "workspace" : normalized).prefix(64))
+        HiveEnvironment.id(fromFolderName: folderName)
     }
 }
 

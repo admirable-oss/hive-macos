@@ -27,7 +27,7 @@ clear path from parallel work to reviewed changes.
 | M8 Parity: Workspace Control | `v0.8` | 🟡 In progress (6 of 7) |
 | M9 Parity: Environments, Processes & Agents | `v0.9` | ✅ Built (2026-11-05) |
 | M10 Parity: Web, Runtime & Onboarding | `v0.10` | ✅ Built (2026-11-05) |
-| M11 macOS Automation & Handoff | `v0.11` | Proposed |
+| M11 macOS Automation & Handoff | `v0.11` | ✅ Built (2026-11-05) |
 | M12 Extensibility & Plugin Surfaces | `v0.12` | Skipped for now |
 | M13 Desktop 1.0 & Trusted Distribution | `v1.0` | Proposed |
 
@@ -391,18 +391,47 @@ new user can try Hive and connect their agents to its MCP server from the app.
 
 ---
 
-## M11 · macOS Automation & Handoff — `v0.11` — **PROPOSED**
+## ✅ M11 · macOS Automation & Handoff — `v0.11` — **BUILT**
 
 Meet people where they already work: Shortcuts, Spotlight, Finder and their editor.
 
-1. **Shortcuts and App Intents (P1, M).** Actions: *Start agent*, *Prompt agent*, *Wait for agent*,
-   *List blocked agents*, *Open environment*. Works from Shortcuts, Spotlight and Siri.
-2. **Deep links and Finder actions (P2, S).** `hive://` links for agents, tabs, panes and
-   environments, plus Finder Services "Open in Hive" and "New Hive Environment Here".
-3. **Editor handoff (P2, S).** From Files and Changes, open a file or diff at the right line in VS
-   Code, Cursor, Xcode or Zed.
-4. **Focus-aware alerts (P2, S).** Mute or summarize selected environments and machines during a
-   macOS Focus mode, using local notification rules that work alongside Focus.
+1. ✅ **Shortcuts and App Intents (P1, M).** Actions:
+   - *Start Agent*, with an optional name and first prompt;
+   - *Prompt Agent*, optionally waiting for the answer, which it returns;
+   - *Wait for Agent*: until it finishes, is ready, needs a decision or exits;
+   - *List Agents That Need You*;
+   - *Open Environment* and *Open Agent*.
+
+   Agents and environments are searchable entities. Five of the actions have Siri and Spotlight
+   phrases ("Which Hive agents need me").
+2. ✅ **Deep links and Finder actions (P2, S).**
+   - Links: `hive://agent/<id>`, `pane/<id>`, `tab/<id>`, `environment/<id>`,
+     `open?path=…` (the environment holding the folder, else a shell there) and
+     `new-environment?path=…`.
+   - *Copy Link* is on agents, panes and environments.
+   - Finder Services: *Open in Hive* and *New Hive Environment Here*, for folders.
+3. ✅ **Editor handoff (P2, S).** *Open in <editor>* and *Open With* on files in Files and
+   Changes. Every diff line opens at its line in the new file, and each hunk header has a button
+   that opens the hunk's first line. VS Code and Cursor open through their `file` URLs, Zed
+   through the `cli` inside its app, and Xcode through `xed --line`. The editor is chosen in
+   Settings.
+4. ✅ **Focus-aware alerts (P2, S).** A *Set Hive Notifications* Focus filter quiets chosen
+   environments, or lets through only agents that need a decision. Ending the Focus puts the
+   defaults back.
+
+**Notes from building it**
+
+- **Shortcuts don't need a window.** The actions go through the `hive` CLI against the session
+  the app shows. `agent wait` exits with 4 (timed out) and 5 (blocked, stalled or exited), which
+  are outcomes rather than errors.
+- **Opening a link with no window open.** In-app links (services, *Open* actions) go out as a
+  `hive://` URL when no window is open, so the system opens one to take it. The link waits for
+  the workspace's first snapshot.
+- **Info.plist.** The URL scheme and Services live in `Support/Hive-Info.plist`, which Xcode merges
+  into the generated Info.plist. Finder lists a new service once the app has run from
+  /Applications, or after `/System/Library/CoreServices/pbs -update`.
+- **Not done:** the Focus filter quiets or lets through notifications but doesn't summarize what
+  was held back when the Focus ends. It covers environments on this Mac, not saved machines.
 
 **✅ Acceptance:** a user can start and steer agents from Shortcuts and Spotlight, deep-link into any
 agent or pane, and open a changed file at the right line in their editor.
@@ -615,14 +644,14 @@ These use macOS to make Hive easier to supervise and control. Statuses reflect t
    new files.
 4. **Drag and drop (P1, S). Complete.** Drop a folder on the sidebar to create an environment, files
    into a terminal to type their paths, a plan file to run it, and an image on an agent to paste it.
-5. **Shortcuts and App Intents (P1, M). M11.** Works from Spotlight, Siri and the Shortcuts app.
-6. **Finder integration (P2, S). M11.** A Services menu or Finder extension item, "Open in Hive" /
+5. **Shortcuts and App Intents (P1, M). Complete (M11).** Works from Spotlight, Siri and the Shortcuts app.
+6. **Finder integration (P2, S). Complete (M11).** A Services menu or Finder extension item, "Open in Hive" /
    "New Hive Environment Here", and a `hive://` URL scheme for deep links to agents and panes.
-7. **Open in editor (P2, S). M11.** From Files and Changes, open in the user's editor (VS Code,
+7. **Open in editor (P2, S). Complete (M11).** From Files and Changes, open in the user's editor (VS Code,
    Cursor, Xcode, Zed) at the right line.
 8. **Terminal polish (P1, S). Complete.** Hive theme colours, Nerd Font fallback, ⌘F find in
    scrollback, ⌘-click to open links and file paths, secure keyboard entry, and a right-click menu.
-9. **Focus filters (P2, S). M11.** Mute notifications from chosen environments during a Focus mode.
+9. **Focus filters (P2, S). Complete (M11).** Mute notifications from chosen environments during a Focus mode.
 
 ---
 

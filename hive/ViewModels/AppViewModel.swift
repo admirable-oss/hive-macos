@@ -404,6 +404,50 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// Opens what a `hive://` link, a Finder service or a Shortcut points at. Waits for the first
+    /// snapshot, since links can arrive while the app is still connecting.
+    func open(_ link: DeepLink) async {
+        for _ in 0..<40 where !workspace.hasSnapshot {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        switch link {
+        case .agent(let id):
+            guard agents.contains(where: { $0.id == id }) else { return missing("agent", id) }
+            openAgent(id)
+        case .pane(let id):
+            guard workspace.panes[id] != nil else { return missing("pane", id) }
+            openPane(id)
+        case .tab(let id):
+            guard workspace.tab(id) != nil else { return missing("tab", id) }
+            openHiveTab(id)
+        case .environment(let id):
+            guard environments.contains(where: { $0.id == id }) else { return missing("environment", id) }
+            openEnvironment(id)
+        case .open(let path):
+            if let environment = environment(containing: path) {
+                openEnvironment(environment.id)
+            } else {
+                dismissSurfaces()
+                append(WorkspaceTab(destination: .scratch, directory: path))
+            }
+        case .newEnvironment(let path):
+            if let existing = environments.first(where: { $0.path == path }) { return openEnvironment(existing.id) }
+            let name = HiveEnvironment.id(fromFolderName: (path as NSString).lastPathComponent)
+            await createEnvironment(name: environments.contains(where: { $0.id == name }) ? "\(name)-\(Int.random(in: 2...999))" : name, path: path)
+        }
+    }
+
+    /// The environment a path is in: the deepest one whose folder holds it.
+    func environment(containing path: String) -> HiveEnvironment? {
+        environments
+            .filter { path == $0.path || path.hasPrefix($0.path.hasSuffix("/") ? $0.path : $0.path + "/") }
+            .max { $0.path.count < $1.path.count }
+    }
+
+    private func missing(_ kind: String, _ id: String) {
+        sidebarError = "The link points at \(kind) \(id), which isn’t in this session."
+    }
+
     /// Opens an agent on an SSH host that isn't saved as a machine (`hive --remote host agent attach`).
     func openRemoteHostAgent(host: String, agent: HiveAgent) {
         dismissSurfaces()

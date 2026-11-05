@@ -231,7 +231,10 @@ struct HiveTabView: View {
                 viewModel.clearMetadata(pane: id)
             })
         }
-        items.append(TerminalMenuItem(title: "Copy Screen", symbol: "text.viewfinder", startsGroup: true) {
+        items.append(TerminalMenuItem(title: "Copy Link to Pane", symbol: "link", startsGroup: true) {
+            DeepLink.pane(id).copy()
+        })
+        items.append(TerminalMenuItem(title: "Copy Screen", symbol: "text.viewfinder") {
             Task { await copySnapshot(of: id, scrollback: 0) }
         })
         items.append(TerminalMenuItem(title: "Save Scrollback…", symbol: "square.and.arrow.down") {
