@@ -4,10 +4,23 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Build macOS app
-        run: xcodebuild -project hive.xcodeproj -scheme hive -destination 'platform=macOS' build
+        # A fresh runner has never trusted SwiftTerm's build-tool plugin, so Xcode refuses it
+        # unless validation is skipped. CI has no signing identity, so build unsigned.
+        run: |
+          xcodebuild -project hive.xcodeproj -scheme hive \
+            -destination 'platform=macOS,arch=arm64' \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build
