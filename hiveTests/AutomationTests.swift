@@ -59,3 +59,20 @@ struct FocusFilterTests {
         #expect(!FocusFilterSettings.allows(state: "done", environmentID: "web"))
     }
 }
+
+struct OutputPatternTests {
+    @Test func literalTextMatchesOnlyItself() throws {
+        let pattern = OutputPattern(text: "port 3000 (ready) [ok] a.b+c?*|d \\w", isRegex: false)
+        let regex = try NSRegularExpression(pattern: pattern.regex)
+        func matches(_ line: String) -> Bool { regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil }
+        #expect(matches("server: port 3000 (ready) [ok] a.b+c?*|d \\w now"))
+        #expect(!matches("port 3000 ready [ok] aXb+c?*|d \\w"))
+        #expect(pattern.label == "“port 3000 (ready) [ok] a.b+c?*|d \\w”")
+    }
+
+    @Test func regexMustCompile() {
+        #expect(OutputPattern(text: "(passed|failed)", isRegex: true).isValid)
+        #expect(!OutputPattern(text: "(unclosed", isRegex: true).isValid)
+        #expect(!OutputPattern(text: "", isRegex: false).isValid)
+    }
+}

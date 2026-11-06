@@ -15,6 +15,9 @@ struct HiveApp: App {
         // Finder's Services menu: "Open in Hive" and "New Hive Environment Here".
         NSApplication.shared.servicesProvider = HiveServicesProvider.shared
         NSUpdateDynamicServices()
+        // An update helper waits for this before it trusts the new version; then check daily.
+        AppUpdater.markLaunched()
+        Task { @MainActor in AppUpdater.shared.startAutomaticChecks() }
     }
 
     var body: some Scene {
@@ -29,6 +32,9 @@ struct HiveApp: App {
         .defaultSize(width: 1100, height: 720)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesCommand()
+            }
             HiveCommands()
             CommandMenu("Terminal") {
                 SecureKeyboardEntryCommand()
@@ -38,6 +44,13 @@ struct HiveApp: App {
         Settings {
             AppSettingsView()
         }
+
+        Window("Software Update", id: "updates") {
+            UpdatesView()
+                .frame(width: 520)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
 
         MenuBarExtra {
             MenuBarAgentPanel(store: menuBarStore)

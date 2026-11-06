@@ -130,6 +130,16 @@ struct HiveDashboardView: View {
             .sheet(item: $worktreesRepository) { environment in
                 WorktreesSheet(repository: environment, viewModel: viewModel)
             }
+            .sheet(item: $viewModel.sendingToPanes) { input in
+                if let tab = viewModel.activeHiveTab {
+                    SendToPanesSheet(viewModel: viewModel, tab: tab, paneIDs: input.paneIDs)
+                }
+            }
+            .sheet(isPresented: Binding(get: { viewModel.watchingOutputOf != nil }, set: { if !$0 { viewModel.watchingOutputOf = nil } })) {
+                if let paneID = viewModel.watchingOutputOf {
+                    WaitForOutputSheet(viewModel: viewModel, paneID: paneID)
+                }
+            }
             .sheet(isPresented: $viewModel.showingWebObserver) {
                 WebObserverSheet(viewModel: viewModel)
             }

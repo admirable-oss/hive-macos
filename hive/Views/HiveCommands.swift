@@ -122,6 +122,15 @@ struct HiveCommands: Commands {
             .keyboardShortcut("r", modifiers: [.command, .option])
             .disabled(!hasPane)
         Divider()
+        Button("Send to Pane…") { viewModel?.composeForPanes() }
+            .keyboardShortcut(.return, modifiers: [.command, .option])
+            .disabled(!hasPane || isPopup)
+        Button("Send to All Panes…") { viewModel?.composeForPanes(all: true) }
+            .keyboardShortcut(.return, modifiers: [.command, .option, .shift])
+            .disabled(!isSplit || isPopup)
+        Button("Wait for Output…") { viewModel?.watchingOutputOf = viewModel?.focusedPaneID }
+            .disabled(!hasPane)
+        Divider()
         Button("Open Popup Shell") { viewModel?.openPopup() }
             .keyboardShortcut("p", modifiers: [.command, .option])
             .disabled(tab == nil)
@@ -207,6 +216,8 @@ struct KeyboardShortcutsSheet: View {
             Shortcut(title: "Open a popup shell", desktop: "⌥⌘P", tuiAction: "popup"),
             Shortcut(title: "Run a command in a popup", desktop: "⌥⇧⌘P"),
             Shortcut(title: "Your [[keys.command]] entries", desktop: "⌃⌥ + their key"),
+            Shortcut(title: "Send to the focused pane", desktop: "⌥⌘↩"),
+            Shortcut(title: "Send to every pane in the tab", desktop: "⇧⌥⌘↩"),
         ]),
         ("Finding things", [
             Shortcut(title: "Go to an agent or pane", desktop: "⌘K", tuiAction: "goto"),

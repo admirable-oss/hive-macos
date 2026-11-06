@@ -24,3 +24,24 @@ jobs:
             -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Unit tests and performance budgets
+        # PerformanceBudgetTests holds keystroke-to-screen p99, memory and idle CPU for sixteen
+        # streaming panes; its numbers are attached to the result bundle on every run.
+        run: |
+          xcodebuild -project hive.xcodeproj -scheme hive \
+            -destination 'platform=macOS,arch=arm64' \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -only-testing:hiveTests \
+            -resultBundlePath "$RUNNER_TEMP/tests.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Keep the test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ${{ runner.temp }}/tests.xcresult
+          if-no-files-found: ignore

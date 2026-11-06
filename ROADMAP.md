@@ -24,12 +24,12 @@ clear path from parallel work to reviewed changes.
 | M5 Settings, Sessions & Upkeep | `v0.5` | ✅ Live |
 | M6 Review Cockpit & Changes | `v0.6` | ✅ Live |
 | M7 Personal Command Center | `v0.7` | ✅ Live |
-| M8 Parity: Workspace Control | `v0.8` | 🟡 In progress (6 of 7) |
+| M8 Parity: Workspace Control | `v0.8` | ✅ Built (2026-11-05) |
 | M9 Parity: Environments, Processes & Agents | `v0.9` | ✅ Built (2026-11-05) |
 | M10 Parity: Web, Runtime & Onboarding | `v0.10` | ✅ Built (2026-11-05) |
 | M11 macOS Automation & Handoff | `v0.11` | ✅ Built (2026-11-05) |
 | M12 Extensibility & Plugin Surfaces | `v0.12` | Skipped for now |
-| M13 Desktop 1.0 & Trusted Distribution | `v1.0` | Proposed |
+| M13 Desktop 1.0 & Trusted Distribution | `v1.0` | ✅ Built; ships once release secrets are set (2026-11-05) |
 
 M8–M10 come from the [parity audit of 2026-11-05](#parity-audit--2026-11-05), which compared the app with
 `hive` 1.3.0-rc.3 (API level 12). They close the gaps between the desktop and the CLI/TUI before the
@@ -207,19 +207,23 @@ executable extension.
 
 ---
 
-## 🟡 M8 · Parity: Workspace Control — `v0.8` — **IN PROGRESS**
+## ✅ M8 · Parity: Workspace Control — `v0.8` — **BUILT**
 
 Everything you can do to tabs and panes in the TUI, you can do in the app, and you can find it in a
 menu.
 
-**Status (2026-11-05):** items 1–6 are built; item 7 (run, send and wait in panes) is next. Item
-headings carry ✅ when done.
+**Status (2026-11-05):** all seven items are built.
 
 **Notes from building it**
 
 - Hive refuses `pane.move` within a pane's own tab ("use swap"). Dropping a pane on another pane's
   edge in the same tab therefore moves it through a stopover tab and straight back. The stopover
   closes itself once empty, and the app keeps the pane on screen meanwhile, so it glides into place.
+- `pane.wait_output` matches a Go regular expression and also sees the command line the shell
+  echoes, so a command whose text contains the pattern matches at once. When the app runs a command
+  and waits for its output, it skips lines that are just that command echoed. Literal text is
+  escaped into a pattern. `NSRegularExpression`'s escaping is valid Go syntax; this was tried against
+  Hive.
 - Popups aren't in a tab's layout. They come in the tab's `popups` list (`pane`, `width_pct`,
   `height_pct`), and Hive focuses a new popup.
 
@@ -255,7 +259,7 @@ headings carry ✅ when done.
    `pane` and `shell` entries in a *Commands* menu, each with its key as a ⌃⌥ shortcut. A `shell`
    command runs in the background and shows its last line in the status area. `plugin_action`
    entries wait for M12.
-7. **Run and send to panes (P2, S).**
+7. ✅ **Run and send to panes (P2, S).** *Send to Panes…* (⌥⌘↩, or ⇧⌥⌘↩ for every pane in the tab) and *Wait for Output…*, in the Pane menu and each pane's right-click menu.
    - *Run Command…* types a command into a pane and runs it (`pane.run`).
    - *Send Text to Panes…* sends one input to several selected panes (`pane.send_text`, with
      `paste` for multi-line text): the desktop take on synchronized panes.
@@ -464,25 +468,58 @@ capability consent.
 
 ---
 
-## M13 · Desktop 1.0 & Trusted Distribution — `v1.0` — **PROPOSED**
+## ✅ M13 · Desktop 1.0 & Trusted Distribution — `v1.0` — **BUILT**
 
 The app leaves preview and becomes something to install without a second thought.
 
-1. **Signed distribution.** Developer ID signing and notarization, a `.app` in a DMG, and a Homebrew
-   cask. Attach packages to each release with `checksums.txt` and its signature.
-2. **In-app updates.** The app's own updater, from GitHub Releases. An update installs only after its
-   checksum and signature are checked, keeps the previous version, and rolls back if the app does not
-   start. Updating the app never stops agents.
-3. **Compatibility policy.** Cover the app's surfaces with the runtime's compatibility policy and
-   remove the preview label.
-4. **Performance budgets in the native app.** Measure keystroke-to-screen p99, idle CPU and memory
-   with 16 streaming panes, and hold the budgets in CI.
-5. **Sandboxing decision.** The app is not sandboxed today (it needs to spawn shells, read the Hive
-   socket and send signals for Kill Ports). Mac App Store distribution would need a helper tool.
-   Decide before shipping 1.0.
+1. ✅ **Signed distribution.** A tag runs the *Release* workflow:
+   - Developer ID signing, then notarization and stapling of the app and of the disk image;
+   - `Hive-<v>.dmg` for people and `Hive-<v>.zip` for the updater;
+   - `checksums.txt`, SSH-signed with the Hive release key as Hive's own releases are;
+   - a Homebrew cask, attached to the release and pushed to the tap when a token is set.
+
+   Each step is a script in `scripts/release/`, also runnable by hand ([docs/RELEASING.md](docs/RELEASING.md)).
+2. ✅ **In-app updates.** *Hive → Check for Updates…* and a daily check. An update installs only when:
+   - `checksums.txt.sshsig` verifies against the release key in `Support/Hive-Info.plist`;
+   - the zip matches its checksum;
+   - the new app has a valid signature from the same Developer ID team and passes Gatekeeper.
+
+   The replaced version is kept. A helper restores it if the new one doesn't report starting within
+   30 seconds, and *Settings → Updates → Restore* goes back by hand. Agents never stop.
+3. ✅ **Compatibility policy.** It's in the README: semantic versions, Hive 1.x at protocol 2 and API
+   level 5 or later, settings carried through 1.x, removals announced a minor release ahead, and
+   the current macOS plus two before it. The README's "early development" label is gone.
+4. ✅ **Performance budgets in CI.** `PerformanceBudgetTests` streams agent output into sixteen panes
+   while typing in one, and holds these budgets:
+   - keystroke-to-screen p99 ≤ 50 ms;
+   - memory ≤ 400 MB for sixteen panes;
+   - idle CPU added by the panes ≤ 3% of a core.
+
+   CI runs it on every push and keeps the numbers in the result bundle. On an M-series Mac:
+   8.7 ms p99, 27 MB and 0% added.
+5. ✅ **Sandboxing decision.** Not sandboxed: Developer ID, notarized, hardened runtime. The app starts
+   shells and SSH sessions, uses Hive's socket, runs `hive` and `git`, and signals processes for
+   Kill Ports, which the sandbox would push into a privileged helper. A Mac App Store edition isn't
+   planned. The reasoning is in the README.
+
+**Notes from building it**
+
+- **Releases need secrets.** No release has been cut yet. It needs the secrets listed in
+  docs/RELEASING.md: the Developer ID certificate, notarization credentials and the release SSH key.
+  Until those are set, the *Release* workflow fails at its first signing step.
+- **Builds from source don't update.** The updater refuses copies built from source: they have no
+  Developer ID team to match. It also refuses copies macOS runs translocated, and tells the user to
+  move the app to Applications first.
+- **Tested:** the checksum signing and its verification (a good signature, and a tampered file
+  refused), the helper's swap and its rollback, and the updater's checks, all in unit tests or
+  dry runs.
+- **Not tested:** a real signed, notarized round trip from one release to the next. It's untested
+  until the first two releases exist.
+- **The test host idles busy.** The app run as XCTest's host idles at about 30% CPU (the app on its
+  own idles below 2%). The idle budget therefore measures what the panes add on top of the app.
 
 **✅ Acceptance:** a signed app installs and updates itself only to verified releases, rolls back a
-failed update, and meets the latency, CPU and memory budgets — with the acceptance of M1–M11 still
+failed update, and meets the latency, CPU and memory budgets, with the acceptance of M1–M11 still
 holding.
 
 ---
@@ -528,7 +565,7 @@ holding.
 | Move a pane to another tab or environment, swap panes (`pane move`, `pane swap`) | ✅ M8 | P1 | M |
 | Active tab follows between clients (`tab focus`) | ✅ M8 | P1 | S |
 | Your own commands on keys (`[[keys.command]]`: popup, pane, shell) | ✅ M8 | P2 | M |
-| Run or send text into panes, wait for output (`pane run`, `send-text`, `wait-output`) | ❌ M8 | P2 | S |
+| Run or send text into panes, wait for output (`pane run`, `send-text`, `wait-output`) | ✅ M8 | P2 | S |
 | Layout export / apply (JSON) | ✅ | P1 | M |
 | Overview (`Ctrl+B O`) | ✅ | P1 | M |
 | Find an agent or pane (`Ctrl+B w`) | ✅ | P0 | S |
@@ -768,8 +805,8 @@ are for shells and scripts, and have no desktop equivalent.
 - **Remote terminals.** Should remote panes stream through `machine proxy` started per machine, or
   through one multiplexed connection? This depends on how the frame and image budgets behave from
   a GUI client.
-- **Sandboxing.** The app isn't sandboxed (it needs to spawn shells, read the Hive socket and send
-  signals for Kill Ports). Mac App Store distribution would need a helper tool. Decide before M13.
+- **Sandboxing.** Decided in M13: not sandboxed, distributed with Developer ID and notarization; no
+  Mac App Store edition.
 
 ---
 

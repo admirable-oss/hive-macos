@@ -596,6 +596,30 @@ final class HiveWorkspaceStore: ObservableObject {
         _ = try await call("pane.focus", params)
     }
 
+    /// Types a command line into a pane's shell and presses Enter.
+    func runInPane(_ id: String, command: String) async throws {
+        _ = try await call("pane.run", ["id": id, "command": command])
+    }
+
+    /// Types text into a pane; `paste` sends it as one bracketed paste, for several lines.
+    func sendText(_ text: String, toPane id: String, paste: Bool) async throws {
+        _ = try await call("pane.send_text", ["id": id, "text": text, "paste": paste])
+    }
+
+    /// Presses named keys in a pane: Enter, Escape, C-c, …
+    func sendKeys(_ keys: [String], toPane id: String) async throws {
+        _ = try await call("pane.send_keys", ["id": id, "keys": keys])
+    }
+
+    /// Waits for a line matching `pattern` (a Go regular expression) and returns it. Only new
+    /// output counts unless `anywhere`. Throws Hive's `timeout` error when `timeout` passes first.
+    func waitForOutput(inPane id: String, pattern: String, anywhere: Bool = false, timeout: Duration? = nil) async throws -> String {
+        struct Match: Decodable { let line: String }
+        var params: [String: Any] = ["id": id, "pattern": pattern, "anywhere": anywhere]
+        if let timeout { params["timeout_ms"] = Int(timeout.components.seconds * 1000) }
+        return try decode(Match.self, from: try await call("pane.wait_output", params)).line
+    }
+
     /// Trades the places of two panes; both keep running.
     func swapPanes(_ id: String, with other: String) async throws {
         _ = try await call("pane.swap", ["id": id, "with": other])

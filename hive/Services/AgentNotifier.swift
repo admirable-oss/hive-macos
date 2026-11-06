@@ -160,6 +160,18 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
         center.add(UNNotificationRequest(identifier: "watch-\(agent.id)", content: content, trigger: nil))
     }
 
+    /// A pane printed what the user was waiting for, or the wait ran out.
+    func notifyOutput(paneTitle: String, environmentID: String, line: String?) {
+        guard FocusFilterSettings.allows(state: "done", environmentID: environmentID) else { return }
+        let content = UNMutableNotificationContent()
+        content.title = paneTitle
+        content.subtitle = environmentID
+        content.body = line.map { "Printed: \($0)" } ?? "Stopped waiting; the output didn’t appear in time."
+        content.sound = .default
+        content.threadIdentifier = environmentID
+        center.add(UNNotificationRequest(identifier: "output-\(UUID().uuidString)", content: content, trigger: nil))
+    }
+
     func resetStateTracking() {
         lastStateByAgent.removeAll()
     }

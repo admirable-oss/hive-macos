@@ -93,6 +93,10 @@ struct AppSettingsView: View {
             }
           }
           .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
+
+          UpdatesView()
+              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+              .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
         }
         .formStyle(.grouped)
         // Every pane's plain buttons and fields take the app's capsule and soft-field look.

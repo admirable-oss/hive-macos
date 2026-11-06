@@ -118,6 +118,7 @@ struct HiveTabView: View {
                 PaneTitleStrip(
                     title: paneTitle(id),
                     reported: viewModel.workspace.metadata(forPane: id),
+                    waitingFor: viewModel.outputWatches[id]?.label,
                     isFocused: focused,
                     showsControls: hoveredPane == id && paneDrag == nil,
                     controls: controls(for: id),
@@ -229,6 +230,18 @@ struct HiveTabView: View {
         if reported.title != nil || !reported.tokens.isEmpty {
             items.append(TerminalMenuItem(title: "Clear Title and Tokens", symbol: "tag.slash") {
                 viewModel.clearMetadata(pane: id)
+            })
+        }
+        items.append(TerminalMenuItem(title: "Send to Panes…", symbol: "keyboard", key: "\r", modifiers: [.command, .option], startsGroup: true) {
+            viewModel.sendingToPanes = AppViewModel.PaneInput(paneIDs: [id])
+        })
+        if let watch = viewModel.outputWatches[id] {
+            items.append(TerminalMenuItem(title: "Stop Waiting for \(watch.label)", symbol: "bell.slash") {
+                viewModel.cancelOutputWatch(ofPane: id)
+            })
+        } else {
+            items.append(TerminalMenuItem(title: "Wait for Output…", symbol: "bell.badge") {
+                viewModel.watchingOutputOf = id
             })
         }
         items.append(TerminalMenuItem(title: "Copy Link to Pane", symbol: "link", startsGroup: true) {
@@ -560,6 +573,8 @@ private struct PaneTitleStrip: View {
     let title: String
     /// What the pane's program reported about itself (`hive pane report-metadata`).
     let reported: (title: String?, tokens: [HiveMetadataEntry.Token])
+    /// The output a "Wait for Output" is watching for, if one is.
+    let waitingFor: String?
     let isFocused: Bool
     let showsControls: Bool
     let controls: PaneControls
@@ -585,6 +600,14 @@ private struct PaneTitleStrip: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 8)
+            if let waitingFor {
+                Image(systemName: "bell.badge.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.hiveAmber)
+                    .symbolEffect(.pulse, options: .repeating)
+                    .help("Waiting for \(waitingFor)")
+                    .transition(.scale.combined(with: .opacity))
+            }
             if !showsControls && !reported.tokens.isEmpty {
                 MetadataTokens(tokens: reported.tokens, limit: 2)
                     .transition(.opacity)

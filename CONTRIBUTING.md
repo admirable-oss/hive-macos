@@ -4,7 +4,7 @@ Thanks for helping build the native macOS app for Hive.
 
 ## Development setup
 
-Use Xcode 26.4 or later on macOS 26.2 or later. Open `hive.xcodeproj`, select the `hive` scheme, and run on My Mac. The project currently has no third-party package dependencies.
+Use Xcode 26.4 or later on macOS 26.2 or later. Open `hive.xcodeproj`, select the `hive` scheme, and run on My Mac. Its one package dependency, SwiftTerm, comes through Swift Package Manager; from the command line, pass `-skipPackagePluginValidation` so Xcode runs SwiftTerm's build plugin. Run the unit tests, including the performance budgets, before opening a pull request (see the README).
 
 ## Changes
 

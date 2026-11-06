@@ -32,6 +32,19 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// Text going to one or more panes, being composed in the Send to Panes sheet.
+    struct PaneInput: Identifiable {
+        let id = UUID()
+        var paneIDs: [String]
+    }
+
+    /// A "tell me when this pane prints…" on one pane.
+    struct OutputWatch: Hashable {
+        let pattern: String
+        /// What the user typed, for showing: the text, or the regular expression.
+        let label: String
+    }
+
     /// A "notify me when…" on one agent, running until Hive answers.
     struct AgentWatch: Hashable {
         /// idle, done, blocked, exited, or `stall` for "stops changing".
@@ -81,6 +94,11 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var rearrangingPaneID: String?
     /// Agent watches by agent ID.
     @Published private(set) var agentWatches: [String: AgentWatch] = [:]
+    /// Output watches by pane ID.
+    @Published private(set) var outputWatches: [String: OutputWatch] = [:]
+    private var outputWatchTasks: [String: Task<Void, Never>] = [:]
+    @Published var sendingToPanes: PaneInput?
+    @Published var watchingOutputOf: String?
     private var agentWatchTasks: [String: Task<Void, Never>] = [:]
     @Published var showingShortcuts = false
     @Published var showingRunInPopup = false
@@ -741,6 +759,70 @@ final class AppViewModel: ObservableObject {
             guard !name.isEmpty else { return }
             Task { await perform { try await self.workspace.renameAgent(id, to: name) } }
         }
+    }
+
+    // MARK: Typing into panes
+
+    /// Sends `text` to each pane. With `pressEnter`, a single line runs as a command (`pane.run`);
+    /// several lines go as one paste, then Enter.
+    func send(_ text: String, toPanes paneIDs: [String], pressEnter: Bool, notifyOn watch: (pattern: String, label: String)?) {
+        let multiline = text.contains("\n")
+        Task {
+            await perform {
+                for id in paneIDs {
+                    // Start watching first, so output that comes quickly isn't missed.
+                    if let watch {
+                        self.watchOutput(ofPane: id, pattern: watch.pattern, label: watch.label, ignoring: text)
+                    }
+                    if pressEnter && !multiline {
+                        try await self.workspace.runInPane(id, command: text)
+                    } else {
+                        try await self.workspace.sendText(text, toPane: id, paste: multiline)
+                        if pressEnter { try await self.workspace.sendKeys(["Enter"], toPane: id) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Notifies once the pane prints a line matching `pattern`, then stops. One watch per pane.
+    /// Lines that are just `ignoring` being echoed back (the command just typed) don't count.
+    func watchOutput(ofPane id: String, pattern: String, label: String, ignoring echo: String? = nil, timeout: Duration = .seconds(6 * 3600)) {
+        cancelOutputWatch(ofPane: id)
+        outputWatches[id] = OutputWatch(pattern: pattern, label: label)
+        outputWatchTasks[id] = Task {
+            let deadline = ContinuousClock.now + timeout
+            var line: String?
+            while !Task.isCancelled, ContinuousClock.now < deadline {
+                do {
+                    let found = try await workspace.waitForOutput(inPane: id, pattern: pattern, timeout: deadline - ContinuousClock.now)
+                    if let echo, !echo.isEmpty, found.contains(echo) { continue }
+                    line = found
+                    break
+                } catch {
+                    break
+                }
+            }
+            guard !Task.isCancelled else { return }
+            outputWatches[id] = nil
+            outputWatchTasks[id] = nil
+            let pane = workspace.panes[id]
+            let title = pane?.name.flatMap { $0.isEmpty ? nil : $0 } ?? "Pane"
+            notifier.notifyOutput(paneTitle: title, environmentID: pane?.environmentID ?? "", line: line)
+            if let line { showCommandStatus("\(title): \(line)") }
+        }
+    }
+
+    func cancelOutputWatch(ofPane id: String) {
+        outputWatchTasks[id]?.cancel()
+        outputWatchTasks[id] = nil
+        outputWatches[id] = nil
+    }
+
+    /// Opens Send to Panes for the focused pane, or for every pane of the tab.
+    func composeForPanes(all: Bool = false) {
+        guard let tab = activeHiveTab, let focused = focusedPaneID else { return NSSound.beep() }
+        sendingToPanes = PaneInput(paneIDs: all ? tab.paneIDs : [focused])
     }
 
     // MARK: Agent tools

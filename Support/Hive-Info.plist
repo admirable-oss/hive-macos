@@ -14,6 +14,10 @@
 			</array>
 		</dict>
 	</array>
+	<!-- The key whose SSH signature on checksums.txt an update must carry: Hive's release key,
+	     as in Hive's install.sh. Format: an OpenSSH allowed_signers line. -->
+	<key>HiveReleaseAllowedSigners</key>
+	<string>hive-release namespaces="hive-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILHcqXlEfCE8NSz4faSoF7WWzUrakzdnGNT4fFEWlNm1</string>
 	<key>NSServices</key>
 	<array>
 		<dict>
